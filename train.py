@@ -8,7 +8,7 @@ import torch.backends.cudnn as cudnn
 import numpy as np
 from torch.utils.data import DataLoader
 from net.CIDNet import CIDNet
-from net.CIDNet_sam import CIDNet as CIDNet_sam
+from net.CIDNet_SSM import CIDNet as CIDNet_sam
 from data.options import option, load_datasets
 from measure import metrics
 from eval import eval

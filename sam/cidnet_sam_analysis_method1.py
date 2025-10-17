@@ -184,9 +184,9 @@ def visualize_alpha_with_sam_masks(image, alpha_s, alpha_i, grouped_masks, outpu
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Analyze CIDNet_sam AlphaPredictor predictions vs SAM grouping')
-    parser.add_argument('--model_path', type=str, default="weights/train2025-10-13-005336/epoch_760.pth",
+    parser.add_argument('--model_path', type=str, default="weights/train2025-10-13-005336/epoch_1500.pth",
                         help='Path to CIDNet_sam model checkpoint')
-    parser.add_argument('--dir', type=str, default="datasets/LOLdataset/our485",
+    parser.add_argument('--dir', type=str, default="datasets/LOLdataset/eval15",
                         help='Base directory containing low/high subdirectories')
     parser.add_argument('--output_dir', type=str, default="sam/analysis_results",
                         help='Directory to save analysis results')

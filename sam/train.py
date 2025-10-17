@@ -5,13 +5,14 @@ import torch
 import random
 from torchvision import transforms
 import torch.optim as optim
-from net.CIDNet_sam import CIDNet as CIDNet_sam
+from net.CIDNet_SSM import CIDNet as CIDNet_sam
 from data.options import option, load_datasets
 from sam.eval import eval
 from data.data import *
 from loss.losses import *
 from data.scheduler import *
 from datetime import datetime
+from measure import metrics
 import dist
 from sam.utils import Tee, checkpoint
 
@@ -181,14 +182,22 @@ def train(rank, args):
         lpips = []
         
         def eval_and_log(use_GT_mean=False):
-            avg_psnr, avg_ssim, avg_lpips = eval(model, testing_data_loader, use_GT_mean=use_GT_mean, alpha_predict=False, base_alpha_s=1.3, base_alpha_i=1.0)
+            output_list, gt_list = eval(model, testing_data_loader, alpha_predict=False, base_alpha_s=1.3, base_alpha_i=1.0)
+            avg_psnr, avg_ssim, avg_lpips = metrics(output_list, gt_list, use_GT_mean=use_GT_mean)
             print("===> Evaluation (use_GT_mean={}, alpha_predict=False, base_alpha_s=1.3, base_alpha_i=1.0) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(use_GT_mean, avg_psnr, avg_ssim, avg_lpips))
-            avg_psnr, avg_ssim, avg_lpips = eval(model, testing_data_loader, use_GT_mean=use_GT_mean, alpha_predict=False, base_alpha_s=1.0, base_alpha_i=1.0)
+            
+            output_list, gt_list = eval(model, testing_data_loader, alpha_predict=False, base_alpha_s=1.0, base_alpha_i=1.0)
+            avg_psnr, avg_ssim, avg_lpips = metrics(output_list, gt_list, use_GT_mean=use_GT_mean)
             print("===> Evaluation (use_GT_mean={}, alpha_predict=False, base_alpha_s=1.0, base_alpha_i=1.0) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(use_GT_mean, avg_psnr, avg_ssim, avg_lpips))
-            avg_psnr, avg_ssim, avg_lpips = eval(model, testing_data_loader, use_GT_mean=use_GT_mean, alpha_predict=True, base_alpha_s=1.3, base_alpha_i=1.0)
+            
+            output_list, gt_list = eval(model, testing_data_loader, alpha_predict=True, base_alpha_s=1.3, base_alpha_i=1.0)
+            avg_psnr, avg_ssim, avg_lpips = metrics(output_list, gt_list, use_GT_mean=use_GT_mean)
             print("===> Evaluation (use_GT_mean={}, alpha_predict=True, base_alpha_s=1.3, base_alpha_i=1.0) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(use_GT_mean, avg_psnr, avg_ssim, avg_lpips))
-            avg_psnr, avg_ssim, avg_lpips = eval(model, testing_data_loader, use_GT_mean=use_GT_mean, alpha_predict=True, base_alpha_s=1.0, base_alpha_i=1.0)
+            
+            output_list, gt_list = eval(model, testing_data_loader, alpha_predict=True, base_alpha_s=1.0, base_alpha_i=1.0)
+            avg_psnr, avg_ssim, avg_lpips = metrics(output_list, gt_list, use_GT_mean=use_GT_mean)
             print("===> Evaluation (use_GT_mean={}, alpha_predict=True, base_alpha_s=1.0, base_alpha_i=1.0) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(use_GT_mean, avg_psnr, avg_ssim, avg_lpips))
+            
             return avg_psnr, avg_ssim, avg_lpips
         
         eval_and_log(False)

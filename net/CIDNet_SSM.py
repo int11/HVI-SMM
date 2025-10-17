@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from net.HVI_transform_sam import RGB_HVI
+from net.HVI_transform_SSM import RGB_HVI
 from net.transformer_utils import *
 from net.LCA import *
 from huggingface_hub import PyTorchModelHubMixin
@@ -9,9 +9,10 @@ from huggingface_hub import hf_hub_download
 import safetensors.torch as sf
 
 
-class AlphaPredictor(nn.Module):
+class SSM(nn.Module):
+    # Spatial Modulation Module(SSM)
     def __init__(self, in_channels, max_scale_factor=1.2):
-        super(AlphaPredictor, self).__init__()
+        super(SSM, self).__init__()
         self.predictor = nn.Sequential(
             nn.ReplicationPad2d(1),
             nn.Conv2d(in_channels, in_channels // 2, 3, stride=1, padding=0, bias=False),
@@ -153,7 +154,7 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
         #     param.requires_grad = False
         
 
-        self.alpha_predictor = AlphaPredictor(in_channels=ch2*2, max_scale_factor=self.max_scale_factor)
+        self.alpha_predictor = SSM(in_channels=ch2*2, max_scale_factor=self.max_scale_factor)
 
 
     def forward(self, x, alpha_predict=True, base_alpha_s=1.0, base_alpha_i=1.0):

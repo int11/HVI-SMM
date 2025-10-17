@@ -6,7 +6,7 @@ from datetime import datetime
 import dist
 from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
 from huggingface_hub import hf_hub_download
-from net.CIDNet_sam import CIDNet
+from net.CIDNet_SSM import CIDNet
 
 
 class Tee:
