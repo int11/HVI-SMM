@@ -53,7 +53,7 @@ def calculate_group_alpha_stats(alpha_map, grouped_masks):
     return stats
 
 
-def visualize_alpha_with_sam_masks(image, alpha_s, alpha_i, grouped_masks, output_path=None):
+def visualize_alpha_with_sam_masks(image, alpha_s, alpha_i, grouped_masks, output_path=None, output_dir=None, filename_prefix=None):
     """
     1번 방법: Alpha 맵 시각화 및 SAM 마스크 오버레이
     - Alpha_s, Alpha_i를 히트맵으로 시각화
@@ -67,6 +67,24 @@ def visualize_alpha_with_sam_masks(image, alpha_s, alpha_i, grouped_masks, outpu
     
     # Alpha_i는 RGB 채널별이므로 평균을 취함
     alpha_i_mean = np.mean(alpha_i, axis=0)
+    
+    # Alpha_s와 Alpha_i를 개별 PNG 파일로 저장 (jet colormap 사용)
+    if output_dir and filename_prefix:
+        # Alpha_s를 jet colormap으로 변환하여 저장
+        alpha_s_normalized = (alpha_s - alpha_s.min()) / (alpha_s.max() - alpha_s.min())
+        alpha_s_colored = plt.cm.jet(alpha_s_normalized)  # RGBA (0-1 범위)
+        alpha_s_rgb = (alpha_s_colored[:, :, :3] * 255).astype(np.uint8)  # RGB로 변환
+        alpha_s_path = os.path.join(output_dir, f"{filename_prefix}_alpha_s.png")
+        Image.fromarray(alpha_s_rgb, mode='RGB').save(alpha_s_path)
+        print(f"  Saved alpha_s map to: {alpha_s_path}")
+        
+        # Alpha_i를 jet colormap으로 변환하여 저장
+        alpha_i_normalized = (alpha_i_mean - alpha_i_mean.min()) / (alpha_i_mean.max() - alpha_i_mean.min())
+        alpha_i_colored = plt.cm.jet(alpha_i_normalized)  # RGBA (0-1 범위)
+        alpha_i_rgb = (alpha_i_colored[:, :, :3] * 255).astype(np.uint8)  # RGB로 변환
+        alpha_i_path = os.path.join(output_dir, f"{filename_prefix}_alpha_i.png")
+        Image.fromarray(alpha_i_rgb, mode='RGB').save(alpha_i_path)
+        print(f"  Saved alpha_i map to: {alpha_i_path}")
     
     # SAM 마스크 경계선 생성
     mask_boundaries = np.zeros_like(img_array)
@@ -186,7 +204,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Analyze CIDNet_sam AlphaPredictor predictions vs SAM grouping')
     parser.add_argument('--model_path', type=str, default="weights/train2025-10-13-005336/epoch_760.pth",
                         help='Path to CIDNet_sam model checkpoint')
-    parser.add_argument('--dir', type=str, default="datasets/LOLdataset/our485",
+    parser.add_argument('--dir', type=str, default="datasets/LOLdataset/eval15",
                         help='Base directory containing low/high subdirectories')
     parser.add_argument('--output_dir', type=str, default="sam/analysis_results",
                         help='Directory to save analysis results')
@@ -246,10 +264,11 @@ if __name__ == "__main__":
         print("  Extracting alpha maps from AlphaPredictor...")
         alpha_s, alpha_i = extract_alpha_maps(cidnet_sam_model, input_image, device)
         
-        # 시각화
+        # 시각화 및 alpha 맵 저장
         output_path = os.path.join(method1_dir, f"{input_filename}_analysis.png")
         alpha_s_stats, alpha_i_stats = visualize_alpha_with_sam_masks(
-            input_image, alpha_s, alpha_i, grouped_masks, output_path
+            input_image, alpha_s, alpha_i, grouped_masks, output_path,
+            output_dir=method1_dir, filename_prefix=input_filename
         )
     
     print(f"\n✓ Analysis complete! Results saved to: {method1_dir}")
