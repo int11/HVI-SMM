@@ -68,7 +68,7 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
         
         self.trans = RGB_HVI()
         
-    def forward(self, x):
+    def forward_fix(self, x):
         dtypes = x.dtype
         hvi = self.trans.RGB_to_HVI(x)
         i = hvi[:,2,:,:].unsqueeze(1).to(dtypes)
@@ -120,6 +120,60 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
 
         return output_rgb
     
+    def forward(self, x):
+        dtypes = x.dtype
+        hvi = self.trans.RGB_to_HVI(x)
+        i = hvi[:,2,:,:].unsqueeze(1).to(dtypes)
+        # low
+        i_enc0 = self.IE_block0(i)
+        i_enc1 = self.IE_block1(i_enc0)
+        hv_0 = self.HVE_block0(hvi)
+        hv_1 = self.HVE_block1(hv_0)
+        i_jump0 = i_enc0
+        hv_jump0 = hv_0
+        
+        i_enc2 = self.I_LCA1(i_enc1, hv_1)
+        hv_2 = self.HV_LCA1(hv_1, i_enc1)
+        v_jump1 = i_enc2
+        hv_jump1 = hv_2
+        i_enc2 = self.IE_block2(i_enc2)
+        hv_2 = self.HVE_block2(hv_2)
+        
+        i_enc3 = self.I_LCA2(i_enc2, hv_2)
+        hv_3 = self.HV_LCA2(hv_2, i_enc2)
+        v_jump2 = i_enc3
+        hv_jump2 = hv_3
+        i_enc3 = self.IE_block3(i_enc2)
+        hv_3 = self.HVE_block3(hv_2)
+        
+        i_enc4 = self.I_LCA3(i_enc3, hv_3)
+        hv_4 = self.HV_LCA3(hv_3, i_enc3)
+        
+        i_dec4 = self.I_LCA4(i_enc4,hv_4)
+        hv_4 = self.HV_LCA4(hv_4, i_enc4)
+        
+        hv_3 = self.HVD_block3(hv_4, hv_jump2)
+        i_dec3 = self.ID_block3(i_dec4, v_jump2)
+        i_dec2 = self.I_LCA5(i_dec3, hv_3)
+        hv_2 = self.HV_LCA5(hv_3, i_dec3)
+        
+        hv_2 = self.HVD_block2(hv_2, hv_jump1)
+        i_dec2 = self.ID_block2(i_dec3, v_jump1)
+        
+        i_dec1 = self.I_LCA6(i_dec2, hv_2)
+        hv_1 = self.HV_LCA6(hv_2, i_dec2)
+        
+        i_dec1 = self.ID_block1(i_dec1, i_jump0)
+        i_dec0 = self.ID_block0(i_dec1)
+        hv_1 = self.HVD_block1(hv_1, hv_jump0)
+        hv_0 = self.HVD_block0(hv_1)
+        
+        output_hvi = torch.cat([hv_0, i_dec0], dim=1) + hvi
+        output_rgb = self.trans.HVI_to_RGB(output_hvi)
+
+        return output_rgb
+
+
     def RGB_to_HVI(self,x):
         hvi = self.trans.RGB_to_HVI(x)
         return hvi
