@@ -12,6 +12,7 @@ from scipy import ndimage
 
 from sam_metrics import group_masks_by_stats, sort_files_by_number
 from utils import extract_alpha_maps, load_sam_model, load_cidnet_sam_model
+from data.options import option, load_datasets
 
 warnings.filterwarnings("ignore")
 
@@ -74,7 +75,10 @@ def visualize_alpha_with_sam_masks(image, alpha_s, alpha_i, grouped_masks, outpu
         alpha_s_normalized = (alpha_s - alpha_s.min()) / (alpha_s.max() - alpha_s.min())
         alpha_s_colored = plt.cm.jet(alpha_s_normalized)  # RGBA (0-1 범위)
         alpha_s_rgb = (alpha_s_colored[:, :, :3] * 255).astype(np.uint8)  # RGB로 변환
-        alpha_s_path = os.path.join(output_dir, f"{filename_prefix}_alpha_s.png")
+        # alpha_s 폴더에 저장
+        alpha_s_folder = os.path.join(output_dir, "alpha_s")
+        os.makedirs(alpha_s_folder, exist_ok=True)
+        alpha_s_path = os.path.join(alpha_s_folder, f"{filename_prefix}.png")
         Image.fromarray(alpha_s_rgb, mode='RGB').save(alpha_s_path)
         print(f"  Saved alpha_s map to: {alpha_s_path}")
         
@@ -82,7 +86,10 @@ def visualize_alpha_with_sam_masks(image, alpha_s, alpha_i, grouped_masks, outpu
         alpha_i_normalized = (alpha_i_mean - alpha_i_mean.min()) / (alpha_i_mean.max() - alpha_i_mean.min())
         alpha_i_colored = plt.cm.jet(alpha_i_normalized)  # RGBA (0-1 범위)
         alpha_i_rgb = (alpha_i_colored[:, :, :3] * 255).astype(np.uint8)  # RGB로 변환
-        alpha_i_path = os.path.join(output_dir, f"{filename_prefix}_alpha_i.png")
+        # alpha_i 폴더에 저장
+        alpha_i_folder = os.path.join(output_dir, "alpha_i")
+        os.makedirs(alpha_i_folder, exist_ok=True)
+        alpha_i_path = os.path.join(alpha_i_folder, f"{filename_prefix}.png")
         Image.fromarray(alpha_i_rgb, mode='RGB').save(alpha_i_path)
         print(f"  Saved alpha_i map to: {alpha_i_path}")
     
@@ -201,12 +208,12 @@ def visualize_alpha_with_sam_masks(image, alpha_s, alpha_i, grouped_masks, outpu
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Analyze CIDNet_sam AlphaPredictor predictions vs SAM grouping')
-    parser.add_argument('--model_path', type=str, default="weights/train2025-10-13-005336/epoch_1500.pth",
+    parser = option()
+    # Override default dataset for analysis script
+    parser.set_defaults(dataset='lolv2_syn')
+    parser.add_argument('--model_path', type=str, default="weights/lolv2_syn/20251104_153530_w_perc_msf1.2/epoch_500.pth",
                         help='Path to CIDNet_sam model checkpoint')
-    parser.add_argument('--dir', type=str, default="datasets/LOLdataset/eval15",
-                        help='Base directory containing low/high subdirectories')
-    parser.add_argument('--output_dir', type=str, default="sam/analysis_results",
+    parser.add_argument('--output_dir', type=str, default="results/analysis_results",
                         help='Directory to save analysis results')
     parser.add_argument('--sam_model', type=str, default="Gourieff/ReActor/models/sams/sam_vit_b_01ec64.pth",
                         help='SAM model path')
@@ -215,7 +222,6 @@ def parse_args():
     parser.add_argument('--max_images', type=int, default=None,
                         help='Maximum number of images to process (None = all)')
     return parser.parse_args()
-
 
 if __name__ == "__main__":
     args = parse_args()
@@ -229,30 +235,58 @@ if __name__ == "__main__":
     method1_dir = os.path.join(args.output_dir, "method1_alpha_heatmap")
     os.makedirs(method1_dir, exist_ok=True)
     
-    # 이미지 디렉토리
-    input_dir = os.path.join(args.dir, "low")
+    # 각 이미지 타입별 폴더 생성
+    alpha_s_dir = os.path.join(method1_dir, "alpha_s")
+    alpha_i_dir = os.path.join(method1_dir, "alpha_i")
+    input_dir = os.path.join(method1_dir, "input_image")
+    gt_dir = os.path.join(method1_dir, "gt_image")
+    analysis_dir = os.path.join(method1_dir, "analysis")
     
-    # 이미지 파일 리스트
-    input_files = [f for f in os.listdir(input_dir) if f.lower().endswith('.png')]
-    input_files = sort_files_by_number(input_files)
+    os.makedirs(alpha_s_dir, exist_ok=True)
+    os.makedirs(alpha_i_dir, exist_ok=True)
+    os.makedirs(input_dir, exist_ok=True)
+    os.makedirs(gt_dir, exist_ok=True)
+    os.makedirs(analysis_dir, exist_ok=True)
     
-    if args.max_images:
-        input_files = input_files[:args.max_images]
-    
-    print(f"Processing {len(input_files)} images...\n")
+    # Load datasets using load_datasets function
+    training_data_loader, testing_data_loader = load_datasets(args)
     
     # 모델 로드
     cidnet_sam_model = load_cidnet_sam_model(args.model_path, device)
     sam_model = load_sam_model(args.sam_model, device)
     
     # 각 이미지 처리
-    for idx, input_file in enumerate(input_files):
-        print(f"\n[{idx+1}/{len(input_files)}] Processing {input_file}...")
-        input_filename = os.path.splitext(os.path.basename(input_file))[0]
+    image_count = 0
+    for batch in testing_data_loader:
+        if args.max_images and image_count >= args.max_images:
+            break
+            
+        input_tensor, gt_tensor, name = batch[0], batch[1], batch[2]
         
-        # 이미지 로드
-        input_path = os.path.join(input_dir, input_file)
-        input_image = Image.open(input_path).convert('RGB')
+        # Convert tensor to PIL Image
+        from torchvision.transforms import ToPILImage
+        input_image = ToPILImage()(input_tensor.squeeze(0).cpu())
+        gt_image = ToPILImage()(gt_tensor.squeeze(0).cpu())
+        
+        # name 처리 (문자열 또는 튜플일 수 있음)
+        if isinstance(name, (list, tuple)):
+            input_filename = name[0]
+        else:
+            input_filename = name
+        
+        # 확장자 제거
+        filename_without_ext = os.path.splitext(input_filename)[0]
+        
+        image_count += 1
+        print(f"\n[{image_count}] Processing {input_filename}...")
+        
+        # Input image 저장
+        input_image.save(os.path.join(input_dir, f"{image_count:03d}.png"))
+        print(f"  Saved input image to: {os.path.join(input_dir, f'{image_count:03d}.png')}")
+        
+        # GT image 저장
+        gt_image.save(os.path.join(gt_dir, f"{image_count:03d}.png"))
+        print(f"  Saved gt image to: {os.path.join(gt_dir, f'{image_count:03d}.png')}")
         
         # SAM 마스크 생성 및 그룹핑
         print("  Generating SAM masks...")
@@ -265,10 +299,15 @@ if __name__ == "__main__":
         alpha_s, alpha_i = extract_alpha_maps(cidnet_sam_model, input_image, device)
         
         # 시각화 및 alpha 맵 저장
-        output_path = os.path.join(method1_dir, f"{input_filename}_analysis.png")
+        output_path = os.path.join(analysis_dir, f"{image_count:03d}.png")
         alpha_s_stats, alpha_i_stats = visualize_alpha_with_sam_masks(
             input_image, alpha_s, alpha_i, grouped_masks, output_path,
-            output_dir=method1_dir, filename_prefix=input_filename
+            output_dir=method1_dir, filename_prefix=f"{image_count:03d}"
         )
     
     print(f"\n✓ Analysis complete! Results saved to: {method1_dir}")
+    print(f"  - Alpha_s maps: {alpha_s_dir}")
+    print(f"  - Alpha_i maps: {alpha_i_dir}")
+    print(f"  - Input images: {input_dir}")
+    print(f"  - GT images: {gt_dir}")
+    print(f"  - Analysis visualizations: {analysis_dir}")
