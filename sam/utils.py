@@ -7,7 +7,58 @@ import dist
 from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
 from huggingface_hub import hf_hub_download
 from net.CIDNet_SSM import CIDNet
+from fvcore.nn import flop_count, FlopCountAnalysis
 
+
+def compute_model_complexity(model, input_size=(1, 3, 384, 384)):
+    """
+    Compute model FLOPs and parameters using fvcore FlopCountAnalysis
+    
+    Args:
+        model: PyTorch model
+        input_size: Input tensor size (B, C, H, W)
+    
+    Returns:
+        flops_str: Number of FLOPs (string format)
+        params_str: Number of parameters (string format)
+    """
+    # Count parameters
+    total_params = sum(p.numel() for p in model.parameters())
+    
+    # Format parameters
+    if total_params >= 1e9:
+        params_str = f"{total_params / 1e9:.2f}G"
+    elif total_params >= 1e6:
+        params_str = f"{total_params / 1e6:.2f}M"
+    elif total_params >= 1e3:
+        params_str = f"{total_params / 1e3:.2f}K"
+    else:
+        params_str = f"{total_params}"
+    
+    # Get model device
+    device = next(model.parameters()).device
+    model.eval()
+    
+    # Use fvcore FlopCountAnalysis for accurate FLOPs calculation
+    input_tensor = torch.randn(input_size, device=device)
+    
+    with torch.no_grad():
+        flops_anal = FlopCountAnalysis(model, input_tensor)
+        total_flops = flops_anal.total()
+    
+    # Format FLOPs
+    if total_flops >= 1e12:
+        flops_str = f"{total_flops / 1e12:.2f}T"
+    elif total_flops >= 1e9:
+        flops_str = f"{total_flops / 1e9:.2f}G"
+    elif total_flops >= 1e6:
+        flops_str = f"{total_flops / 1e6:.2f}M"
+    elif total_flops >= 1e3:
+        flops_str = f"{total_flops / 1e3:.2f}K"
+    else:
+        flops_str = f"{total_flops}"
+
+    return flops_str, params_str
 
 class Tee:
     def __init__(self, path):

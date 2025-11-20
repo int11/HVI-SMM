@@ -6,6 +6,7 @@ import random
 from torchvision import transforms
 import torch.optim as optim
 from net.CIDNet_SSM import CIDNet as CIDNet_SSM
+from net.CIDNet import CIDNet
 from data.options import option, load_datasets
 from sam.eval import eval
 from data.data import *
@@ -14,7 +15,8 @@ from data.scheduler import *
 from datetime import datetime
 from measure import metrics
 import dist
-from sam.utils import Tee, checkpoint
+from sam.utils import Tee, checkpoint, compute_model_complexity
+from torch.utils.tensorboard import SummaryWriter
 
 
 def train_one_epoch(model, optimizer, training_data_loader, args, L1_loss, P_loss, E_loss, D_loss):
@@ -71,8 +73,8 @@ def train_one_epoch(model, optimizer, training_data_loader, args, L1_loss, P_los
     output_img.save(args.val_folder+'training/test.png')
     gt_img.save(args.val_folder+'training/gt.png')
     
-    return total_loss, total_batches
-                
+    avg_loss = total_loss / total_batches
+    return avg_loss
 
 
 def build_model(max_scale_factor=1.2):
@@ -149,11 +151,25 @@ def train(rank, args):
 
     now = datetime.now().strftime("%Y%m%d_%H%M%S")
     save_dir = f"./weights/{args.dataset}/{now}"
+    
+    # Initialize TensorBoard writer (only on main process)
+    writer = None
+    if dist.is_main_process():
+        log_dir = os.path.join(save_dir, 'tensorboard')
+        writer = SummaryWriter(log_dir)
+        print(f"TensorBoard logging to: {log_dir}")
+    
     with Tee(os.path.join(save_dir, f'log.txt')):
         print(args)
 
         training_data_loader, testing_data_loader = load_datasets(args)
         model = build_model(args.max_scale_factor)
+
+        # Compute model complexity (only on main process, and BEFORE DDP wrapping)
+        if dist.is_main_process():
+            flops, params = compute_model_complexity(model)
+            print(f"Model FLOPs: {flops}, Params: {params}")
+
         L1_loss,P_loss,E_loss,D_loss = init_loss(args)
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
         
@@ -175,7 +191,7 @@ def train(rank, args):
         # Wrap for distributed training if available
         if dist.is_dist_available_and_initialized():
             training_data_loader = dist.warp_loader(training_data_loader, args.shuffle)
-            model = dist.warp_model(model, find_unused_parameters=True, sync_bn=True)
+            model = dist.warp_model(model, sync_bn=True)
 
 
         # train
@@ -210,12 +226,17 @@ def train(rank, args):
             if dist.is_dist_available_and_initialized():
                 training_data_loader.sampler.set_epoch(epoch)
                 
-            epoch_loss, batch_count = train_one_epoch(model, optimizer, training_data_loader, args, L1_loss, P_loss, E_loss, D_loss)
+            avg_loss = train_one_epoch(model, optimizer, training_data_loader, args, L1_loss, P_loss, E_loss, D_loss)
             scheduler.step()
+            
             # Log basic epoch info for all processes
-            avg_loss = epoch_loss / batch_count
             print("===> Epoch[{}] Avg Loss: {:.6f} || Learning rate: {:.6f}".format(
                 epoch, avg_loss, optimizer.param_groups[0]['lr']))
+            
+            # Log to TensorBoard
+            if writer is not None:
+                writer.add_scalar('Loss/train', avg_loss, epoch)
+                writer.add_scalar('Learning_Rate', optimizer.param_groups[0]['lr'], epoch)
             
             if epoch % args.snapshots == 0 and dist.is_main_process():
                 checkpoint(epoch, model, optimizer, save_dir)
@@ -226,11 +247,18 @@ def train(rank, args):
                 psnr.append(avg_psnr)
                 ssim.append(avg_ssim)
                 lpips.append(avg_lpips)
-                print(psnr)
-                print(ssim)
-                print(lpips)
+                
+                # Log evaluation metrics to TensorBoard
+                if writer is not None:
+                    writer.add_scalar('Metrics/PSNR', avg_psnr, epoch)
+                    writer.add_scalar('Metrics/SSIM', avg_ssim, epoch)
+                    writer.add_scalar('Metrics/LPIPS', avg_lpips, epoch)
 
             torch.cuda.empty_cache()
+        
+        # Close TensorBoard writer
+        if writer is not None:
+            writer.close()
 
 if __name__ == '__main__':
     args = option().parse_args()
@@ -244,5 +272,4 @@ if __name__ == '__main__':
     if world_size > 1:
         import torch.multiprocessing as mp
         mp.spawn(train, args=(args,), nprocs=world_size, join=True)
-    else:
-        train(None, args)
+    

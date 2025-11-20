@@ -8,7 +8,7 @@ from data.SICE_blur_SID import LOLBlurDatasetFromFolder, SIDDatasetFromFolder, S
 def option():
     # Training settings
     parser = argparse.ArgumentParser(description='CIDNet')
-    parser.add_argument('--batchSize', type=int, default=2, help='training batch size')
+    parser.add_argument('--batchSize', type=int, default=1, help='training batch size')
     parser.add_argument('--cropSize', type=int, default=384, help='image crop size (patch size)')
     parser.add_argument('--nEpochs', type=int, default=500, help='number of epochs to train for end')
     parser.add_argument('--start_epoch', type=int, default=0, help='number of epochs to start, >0 is retrained a pre-trained pth')
