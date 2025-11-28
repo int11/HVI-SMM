@@ -7,7 +7,7 @@ from torchvision import transforms
 import torch.optim as optim
 from net.CIDNet_SSM import CIDNet as CIDNet_SSM
 from net.CIDNet import CIDNet
-from data.options import option, load_datasets
+from sam.options import option, load_datasets
 from sam.eval import eval
 from data.data import *
 from loss.losses import *
@@ -19,9 +19,8 @@ from sam.utils import Tee, checkpoint, compute_model_complexity
 from torch.utils.tensorboard import SummaryWriter
 
 
-def init_seed(seed=None, deterministic=False, benchmark=True):
-    if seed is None:
-        seed = random.randint(1, 1000000)
+def init_seed(seed, deterministic=False, benchmark=True):
+    print(f"Using seed: {seed}")
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
@@ -40,6 +39,8 @@ def init_seed(seed=None, deterministic=False, benchmark=True):
 
 
 def train_one_epoch(model, optimizer, training_data_loader, args, L1_loss, P_loss, E_loss, D_loss):
+    import time
+    start_time = time.time()
     model.train()
     total_loss = 0  # 전체 에폭의 손실 합계
     total_batches = 0  # 전체 배치 수
@@ -94,15 +95,8 @@ def train_one_epoch(model, optimizer, training_data_loader, args, L1_loss, P_los
     gt_img.save(args.val_folder+'training/gt.png')
     
     avg_loss = total_loss / total_batches
-    return avg_loss
-
-
-def build_model(max_scale_factor=1.2):
-    print('===> Building model ')
-    # model = CIDNet()
-    model = CIDNet_SSM(max_scale_factor=max_scale_factor)
-    model = model.to(dist.get_device())
-    return model
+    elapsed_time = time.time() - start_time
+    return avg_loss, elapsed_time
 
 
 def make_scheduler(optimizer, args):
@@ -173,9 +167,9 @@ def train(rank, args):
     now = datetime.now().strftime("%Y%m%d_%H%M%S")
     save_dir = f"./weights/{args.dataset}/{now}"
 
-    with Tee(os.path.join(save_dir, f'log.txt')):
-        init_seed(args.seed)
-        
+    with Tee(os.path.join(save_dir, f'1log.txt')):
+        init_seed(args.seed + rank)
+
         # Initialize TensorBoard writer (only on main process)
         writer = None
         if dist.is_main_process():
@@ -186,7 +180,12 @@ def train(rank, args):
         print(args)
 
         training_data_loader, testing_data_loader = load_datasets(args)
-        model = build_model(args.max_scale_factor)
+        
+        # Build model
+        print('===> Building model ')
+        # model = CIDNet()
+        model = CIDNet_SSM(max_scale_factor=args.max_scale_factor)
+        model = model.to(dist.get_device())
 
         # Compute model complexity (only on main process, and BEFORE DDP wrapping)
         if dist.is_main_process():
@@ -249,12 +248,12 @@ def train(rank, args):
             if dist.is_dist_available_and_initialized():
                 training_data_loader.sampler.set_epoch(epoch)
                 
-            avg_loss = train_one_epoch(model, optimizer, training_data_loader, args, L1_loss, P_loss, E_loss, D_loss)
+            avg_loss, epoch_time = train_one_epoch(model, optimizer, training_data_loader, args, L1_loss, P_loss, E_loss, D_loss)
             scheduler.step()
             
             # Log basic epoch info for all processes
-            print("===> Epoch[{}] Avg Loss: {:.6f} || Learning rate: {:.6f}".format(
-                epoch, avg_loss, optimizer.param_groups[0]['lr']))
+            print("===> Epoch[{}] Avg Loss: {:.6f} || Learning rate: {:.6f} || Time: {:.2f}s".format(
+                epoch, avg_loss, optimizer.param_groups[0]['lr'], epoch_time))
             
             # Log to TensorBoard
             if writer is not None:
@@ -267,9 +266,6 @@ def train(rank, args):
                 eval_and_log(False)
                 avg_psnr, avg_ssim, avg_lpips = eval_and_log(True)
                 
-                psnr.append(avg_psnr)
-                ssim.append(avg_ssim)
-                lpips.append(avg_lpips)
                 
                 # Log evaluation metrics to TensorBoard
                 if writer is not None:
@@ -297,4 +293,3 @@ if __name__ == '__main__':
         mp.spawn(train, args=(args,), nprocs=world_size, join=True)
     else:
         train(None, args)
-    

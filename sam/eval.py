@@ -6,7 +6,7 @@ from loss.losses import *
 from net.CIDNet import CIDNet
 from measure import metrics
 import dist
-from data.options import option, load_datasets
+from sam.options import option, load_datasets
 from net.CIDNet_SSM import CIDNet as CIDNet_SSM
 import safetensors.torch as sf
 from huggingface_hub import hf_hub_download
@@ -19,15 +19,27 @@ def eval(model, testing_data_loader, alpha_predict=True, base_alpha_s=1.0, base_
     model = dist.de_parallel(model)
     model.eval()
 
+    if isinstance(model, CIDNet):
+        model.trans.gated = True
+        model.trans.gated2 = True
+        model.trans.alpha_s = base_alpha_s
+        model.trans.alpha_i = base_alpha_i
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
     output_list = []  # 출력 이미지 저장용 리스트
     gt_list = []   # 라벨 이미지 저장용 리스트
 
     for batch in testing_data_loader:
         with torch.no_grad():
             input, gt, name = batch[0], batch[1], batch[2]
-            input = input.cuda()
-            output = model(input, alpha_predict=alpha_predict, base_alpha_s=base_alpha_s, base_alpha_i=base_alpha_i)
-        output = torch.clamp(output.cuda(),0,1).cuda()
+            input = input.to(device)
+            if isinstance(model, CIDNet_SSM):
+                output = model(input, alpha_predict=alpha_predict, base_alpha_s=base_alpha_s, base_alpha_i=base_alpha_i)
+            elif isinstance(model, CIDNet):
+                output = model(input)
+
+        output = torch.clamp(output,0,1).to(device)
         output_np = output.squeeze(0).cpu().numpy().transpose(1, 2, 0)
         output_list.append(output_np)
         # gt는 tensor이므로 PIL로 변환
@@ -61,38 +73,6 @@ def load_cidnet_base_model(model_path, device):
     model.eval()
     return model
 
-
-def eval_original(model, testing_data_loader, device, base_alpha_s=1.0, base_alpha_i=1.0):
-    """기본 CIDNet으로 dataloader의 모든 이미지 처리"""
-    torch.set_grad_enabled(False)
-    
-    model = dist.de_parallel(model)
-    model.eval()
-    
-    # 기본 CIDNet의 alpha 파라미터 설정
-    model.trans.alpha_s = base_alpha_s
-    model.trans.alpha_i = base_alpha_i
-
-    output_list = []  # 출력 이미지 저장용 리스트
-    gt_list = []   # 라벨 이미지 저장용 리스트
-
-    for batch in testing_data_loader:
-        with torch.no_grad():
-            input, gt, name = batch[0], batch[1], batch[2]
-            input = input.to(device)
-            output = model(input)
-        output = torch.clamp(output, 0, 1).to(device)
-        output_np = output.squeeze(0).cpu().numpy().transpose(1, 2, 0)
-        output_list.append(output_np)
-        # gt는 tensor이므로 PIL로 변환
-        from torchvision.transforms import ToPILImage
-        gt_img = ToPILImage()(gt.squeeze(0).cpu())
-        gt_list.append(gt_img)
-        torch.cuda.empty_cache()
-    
-    torch.set_grad_enabled(True)
-
-    return output_list, gt_list
     
 if __name__ == '__main__':
     parser = option()
@@ -123,7 +103,7 @@ if __name__ == '__main__':
     output_list, gt_list = eval(eval_net, testing_data_loader, alpha_predict=True, base_alpha_s=args.base_alpha_s, base_alpha_i=args.base_alpha_i)
     
     # Evaluate - Base CIDNet (without alpha prediction)
-    output_base_list, gt_list_base = eval_original(cidnet_base, testing_data_loader, device, base_alpha_s=args.base_alpha_s, base_alpha_i=args.base_alpha_i)
+    output_base_list, gt_list_base = eval(cidnet_base, testing_data_loader, alpha_predict=False, base_alpha_s=args.base_alpha_s, base_alpha_i=args.base_alpha_i)
     
     # Calculate metrics for CIDNet_sam
     print("\n" + "="*60)
