@@ -5,8 +5,7 @@ import torch
 import random
 from torchvision import transforms
 import torch.optim as optim
-from net.CIDNet_SSM import CIDNet as CIDNet_SSM
-from net.CIDNet import CIDNet
+import importlib.util
 from sam.options import option, load_datasets
 from sam.eval import eval
 from data.data import *
@@ -168,7 +167,7 @@ def train(rank, args):
     save_dir = f"./weights/{args.dataset}/{now}"
 
     with Tee(os.path.join(save_dir, f'1log.txt')):
-        init_seed(args.seed + rank)
+        init_seed(args.seed + (rank if rank is not None else 0))
 
         # Initialize TensorBoard writer (only on main process)
         writer = None
@@ -181,10 +180,22 @@ def train(rank, args):
 
         training_data_loader, testing_data_loader = load_datasets(args)
         
-        # Build model
+        # Build model (always use CIDNet class from file)
         print('===> Building model ')
-        # model = CIDNet()
-        model = CIDNet_SSM(max_scale_factor=args.max_scale_factor)
+        
+        model_file_path = args.model_file
+        module_name = os.path.splitext(os.path.basename(model_file_path))[0]
+        spec = importlib.util.spec_from_file_location(module_name, model_file_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        ModelClass = getattr(module, 'CIDNet')
+        # If CIDNet supports max_scale_factor, pass it
+        import inspect
+        params = inspect.signature(ModelClass.__init__).parameters
+        if 'max_scale_factor' in params:
+            model = ModelClass(max_scale_factor=args.max_scale_factor)
+        else:
+            model = ModelClass()
         model = model.to(dist.get_device())
 
         # Compute model complexity (only on main process, and BEFORE DDP wrapping)
@@ -213,7 +224,7 @@ def train(rank, args):
         # Wrap for distributed training if available
         if dist.is_dist_available_and_initialized():
             training_data_loader = dist.warp_loader(training_data_loader, args.shuffle)
-            model = dist.warp_model(model, sync_bn=True)
+            model = dist.warp_model(model, sync_bn=True, find_unused_parameters=True)
 
 
         # train
@@ -284,6 +295,8 @@ if __name__ == '__main__':
 
     if args.gpu_mode == False:
         os.environ['CUDA_VISIBLE_DEVICES'] = ""
+    else:
+        os.environ['CUDA_VISIBLE_DEVICES'] = args.cuda_visible_devices
 
     world_size = torch.cuda.device_count()
     print(f"Detected {world_size} GPUs")

@@ -25,11 +25,13 @@ def option():
     parser.add_argument('--snapshots', type=int, default=10, help='Snapshots for save checkpoints pth')
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning Rate')
     parser.add_argument('--gpu_mode', type=bool, default=True)
+    parser.add_argument('--cuda_visible_devices', type=str, default="1", help='Set CUDA_VISIBLE_DEVICES (e.g., "0,1")')
     parser.add_argument('--shuffle', type=bool, default=True)
-    parser.add_argument('--threads', type=int, default=0, help='number of threads for dataloader to use')
+    parser.add_argument('--threads', type=int, default=4, help='number of threads for dataloader to use')
     parser.add_argument('--seed', type=int, default=1, help='random seed to use. Default=123')
 
     # choose a scheduler
+    parser.add_argument('--model_file', type=str, default='net/CIDNet_fix.py', help='Path to model file (e.g., net/CIDNet_fix.py)')
     parser.add_argument('--cos_restart_cyclic', type=bool, default=False)
     parser.add_argument('--cos_restart', type=bool, default=True)
 

@@ -76,6 +76,7 @@ def load_cidnet_base_model(model_path, device):
     
 if __name__ == '__main__':
     parser = option()
+    parser.set_defaults(dataset='lol_v1')
     parser.add_argument('--weight_path', type=str, default='weights/lolv2_syn/20251104_153530_w_perc_msf1.2/epoch_500.pth', help='Path to the pre-trained model weights')
     parser.add_argument('--output_dir', type=str, default='results/ssm_eval_results', help='Directory to save comparison images')
     parser.add_argument('--cidnet_model', type=str, default="Fediory/HVI-CIDNet-LOLv2-syn-wperc",
