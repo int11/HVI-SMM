@@ -16,3 +16,4 @@ opencv-python
 gradio
 huggingface_hub
 safetensors
+fvcore
