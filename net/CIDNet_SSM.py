@@ -41,7 +41,7 @@ class SSM(nn.Module):
         return alpha_s, alpha_i  # alpha_s: (batch, 1, h, w), alpha_i: (batch, 3, h, w)
 
 
-class CIDNet(nn.Module, PyTorchModelHubMixin):
+class CIDNet_SSM(nn.Module, PyTorchModelHubMixin):
     def __init__(self, 
                  channels=[36, 36, 72, 144],
                  heads=[1, 2, 4, 8],
@@ -50,7 +50,7 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
                  sam_model_path="Gourieff/ReActor/models/sams/sam_vit_b_01ec64.pth",
                  max_scale_factor=1.2
         ):
-        super(CIDNet, self).__init__()
+        super(CIDNet_SSM, self).__init__()
 
         [ch1, ch2, ch3, ch4] = channels
         [head1, head2, head3, head4] = heads
@@ -200,7 +200,7 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
     
 
 if __name__ == "__main__":
-    model = CIDNet()
+    model = CIDNet_SSM()
     model.eval()
     dummy_input = torch.randn(2, 3, 400, 400)  # Example input tensor
     with torch.no_grad():
