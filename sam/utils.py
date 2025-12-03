@@ -6,7 +6,7 @@ from datetime import datetime
 import dist
 from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
 from huggingface_hub import hf_hub_download
-from net.CIDNet_SSM import CIDNet
+from net.CIDNet_SSM import CIDNet_SSM
 from fvcore.nn import flop_count, FlopCountAnalysis
 
 
@@ -232,7 +232,7 @@ def load_cidnet_sam_model(model_path, device):
     checkpoint = torch.load(model_path, map_location=device)
     
     # CIDNet_sam.py의 CIDNet 클래스로 모델 초기화
-    model = CIDNet(
+    model = CIDNet_SSM(
         channels=[36, 36, 72, 144],
         heads=[1, 2, 4, 8],
         norm=False,

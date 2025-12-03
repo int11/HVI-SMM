@@ -3,15 +3,14 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data.data import *
 from loss.losses import *
-from net.CIDNet import CIDNet
 from measure import metrics
 import dist
 from sam.options import option, load_datasets
-from net.CIDNet_SSM import CIDNet as CIDNet_SSM
 import safetensors.torch as sf
 from huggingface_hub import hf_hub_download
-import torchvision.transforms as transforms
-
+from net.CIDNet_SSM import CIDNet_SSM
+from net.CIDNet import CIDNet
+from net.CIDNet_fix import CIDNet_fix
 
 def eval(model, testing_data_loader, alpha_predict=True, base_alpha_s=1.0, base_alpha_i=1.0):
     torch.set_grad_enabled(False)
@@ -19,7 +18,7 @@ def eval(model, testing_data_loader, alpha_predict=True, base_alpha_s=1.0, base_
     model = dist.de_parallel(model)
     model.eval()
 
-    if isinstance(model, CIDNet):
+    if isinstance(model, (CIDNet, CIDNet_fix)):
         model.trans.gated = True
         model.trans.gated2 = True
         model.trans.alpha_s = base_alpha_s
@@ -36,7 +35,7 @@ def eval(model, testing_data_loader, alpha_predict=True, base_alpha_s=1.0, base_
             input = input.to(device)
             if isinstance(model, CIDNet_SSM):
                 output = model(input, alpha_predict=alpha_predict, base_alpha_s=base_alpha_s, base_alpha_i=base_alpha_i)
-            elif isinstance(model, CIDNet):
+            elif isinstance(model, (CIDNet, CIDNet_fix)):
                 output = model(input)
 
         output = torch.clamp(output,0,1).to(device)

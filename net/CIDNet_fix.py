@@ -5,13 +5,13 @@ from net.transformer_utils import *
 from net.LCA import *
 from huggingface_hub import PyTorchModelHubMixin
 
-class CIDNet(nn.Module, PyTorchModelHubMixin):
+class CIDNet_fix(nn.Module, PyTorchModelHubMixin):
     def __init__(self, 
                  channels=[36, 36, 72, 144],
                  heads=[1, 2, 4, 8],
                  norm=False
         ):
-        super(CIDNet, self).__init__()
+        super(CIDNet_fix, self).__init__()
         
         
         [ch1, ch2, ch3, ch4] = channels

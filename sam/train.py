@@ -3,9 +3,10 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 import random
+import inspect
 from torchvision import transforms
 import torch.optim as optim
-import importlib.util
+import importlib
 from sam.options import option, load_datasets
 from sam.eval import eval
 from data.data import *
@@ -180,17 +181,13 @@ def train(rank, args):
 
         training_data_loader, testing_data_loader = load_datasets(args)
         
-        # Build model (always use CIDNet class from file)
+        # Build model (class name matches file name)
         print('===> Building model ')
-        
         model_file_path = args.model_file
-        module_name = os.path.splitext(os.path.basename(model_file_path))[0]
-        spec = importlib.util.spec_from_file_location(module_name, model_file_path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        ModelClass = getattr(module, 'CIDNet')
-        # If CIDNet supports max_scale_factor, pass it
-        import inspect
+        class_name = os.path.splitext(os.path.basename(model_file_path))[0]
+        module_name = 'net.' + class_name
+        module = importlib.import_module(module_name)
+        ModelClass = getattr(module, class_name)
         params = inspect.signature(ModelClass.__init__).parameters
         if 'max_scale_factor' in params:
             model = ModelClass(max_scale_factor=args.max_scale_factor)
@@ -250,9 +247,7 @@ def train(rank, args):
             print("===> Evaluation (use_GT_mean={}, alpha_predict=True, base_alpha_s=1.0, base_alpha_i=1.0) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(use_GT_mean, avg_psnr, avg_ssim, avg_lpips))
             
             return avg_psnr, avg_ssim, avg_lpips
-        
-        # eval_and_log(False)
-        # eval_and_log(True)
+
 
         for epoch in range(start_epoch+1, args.nEpochs + start_epoch + 1):
             # Set epoch for distributed sampler
