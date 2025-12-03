@@ -197,7 +197,7 @@ def train(rank, args):
 
         # Compute model complexity (only on main process, and BEFORE DDP wrapping)
         if dist.is_main_process():
-            flops, params = compute_model_complexity(model)
+            flops, params = compute_model_complexity(model, input_size=(1, 3, args.cropSize, args.cropSize))
             print(f"Model FLOPs: {flops}, Params: {params}")
 
         L1_loss, P_loss, E_loss, D_loss = init_loss(args)
