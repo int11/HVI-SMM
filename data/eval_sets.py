@@ -38,9 +38,11 @@ class DatasetFromFolderEval(data.Dataset):
         low_dir = os.path.join(data_dir, folder1)
         high_dir = os.path.join(data_dir, folder2)
         low_files = [f for f in listdir(low_dir) if is_image_file(f)]
+        high_files = [f for f in listdir(high_dir) if is_image_file(f)]
         low_files.sort()
+        high_files.sort()
         self.low_paths = [os.path.join(low_dir, f) for f in low_files]
-        self.high_paths = [os.path.join(high_dir, f) for f in low_files]  # low와 파일명 맞춤
+        self.high_paths = [os.path.join(high_dir, f) for f in high_files]  # high 폴더의 파일명 사용
         self.transform = transform
 
     def __getitem__(self, index):
