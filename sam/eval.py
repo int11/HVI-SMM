@@ -11,6 +11,8 @@ from huggingface_hub import hf_hub_download
 from net.CIDNet_SSM import CIDNet_SSM
 from net.CIDNet import CIDNet
 from net.CIDNet_fix import CIDNet_fix
+from torchvision.transforms import ToPILImage
+
 
 def eval(model, testing_data_loader, alpha_predict=True, base_alpha_s=1.0, base_alpha_i=1.0):
     torch.set_grad_enabled(False)
@@ -42,7 +44,6 @@ def eval(model, testing_data_loader, alpha_predict=True, base_alpha_s=1.0, base_
         output_np = output.squeeze(0).cpu().numpy().transpose(1, 2, 0)
         output_list.append(output_np)
         # gt는 tensor이므로 PIL로 변환
-        from torchvision.transforms import ToPILImage
         gt_img = ToPILImage()(gt.squeeze(0).cpu())
         gt_list.append(gt_img)
         torch.cuda.empty_cache()
@@ -75,14 +76,14 @@ def load_cidnet_base_model(model_path, device):
     
 if __name__ == '__main__':
     parser = option()
-    parser.set_defaults(dataset='lol_v1')
-    parser.add_argument('--weight_path', type=str, default='weights/lolv2_syn/20251104_153530_w_perc_msf1.2/epoch_500.pth', help='Path to the pre-trained model weights')
+    parser.set_defaults(dataset='lolv2_real')
+    parser.add_argument('--weight_path', type=str, default='weights/lolv2_real/20251204_201043/epoch_1.pth', help='Path to the pre-trained model weights')
     parser.add_argument('--output_dir', type=str, default='results/ssm_eval_results', help='Directory to save comparison images')
     parser.add_argument('--cidnet_model', type=str, default="Fediory/HVI-CIDNet-LOLv2-syn-wperc",
                         help='CIDNet model name or path from Hugging Face')
     
     parser.add_argument('--base_alpha_s', type=float, default=1.0, help='Base alpha_s parameter for CIDNet')
-    parser.add_argument('--base_alpha_i', type=float, default=1.0, help='Base alpha_i parameter for CIDNet')
+    parser.add_argument('--base_alpha_i', type=float, default=1.3, help='Base alpha_i parameter for CIDNet')
     parser.add_argument('--use_GT_mean', type=bool, default=False, help='Use the mean of GT to rectify the output of the model')
     args = parser.parse_args()
 

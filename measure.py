@@ -136,36 +136,3 @@ def metrics_one(im1, im2, use_GT_mean):
     lpips_model = get_lpips_model()
     score_lpips = lpips_model.forward(ex_ref, ex_p0)
     return score_psnr, score_ssim, score_lpips
-
-
-if __name__ == '__main__':
-    mea_parser = argparse.ArgumentParser(description='Measure')
-    mea_parser.add_argument('--use_GT_mean', action='store_true', default=True, help='Use the mean of GT to rectify the output of the model')
-    mea_parser.add_argument('--dataset', type=str, choices=['lol', 'lol_v2_real', 'lol_v2_syn', 'SICE_grad', 'SICE_mix'], 
-                          default='lol', help='Choose dataset to measure')
-    mea = mea_parser.parse_args()
-
-    if mea.dataset == 'lol':
-        im_dir = './output/LOLv1/*.png'
-        label_dir = './datasets/LOLdataset/eval15/high/'
-    elif mea.dataset == 'lol_v2_real':
-        im_dir = './output/LOLv2_real/*.png'
-        label_dir = './datasets/LOLv2/Real_captured/Test/Normal/'
-    elif mea.dataset == 'lol_v2_syn':
-        im_dir = './output/LOLv2_syn/*.png'
-        label_dir = './datasets/LOLv2/Synthetic/Test/Normal/'
-    elif mea.dataset == 'SICE_grad':
-        im_dir = './output/SICE_grad/*.png'
-        label_dir = './datasets/SICE/SICE_Reshape/'
-    elif mea.dataset == 'SICE_mix':
-        im_dir = './output/SICE_mix/*.png'
-        label_dir = './datasets/SICE/SICE_Reshape/'
-    
-    # Generate file lists after setting directories
-    im_list = sorted(glob.glob(im_dir))
-    label_list = sorted([os.path.join(label_dir, os.path.basename(x)) for x in im_list])
-
-    avg_psnr, avg_ssim, avg_lpips = metrics(im_list, label_list, mea.use_GT_mean)
-    print("===> Avg.PSNR: {:.4f} dB ".format(avg_psnr))
-    print("===> Avg.SSIM: {:.4f} ".format(avg_ssim))
-    print("===> Avg.LPIPS: {:.4f} ".format(avg_lpips))

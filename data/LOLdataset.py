@@ -19,8 +19,8 @@ class LOLDatasetFromFolder(data.Dataset):
         
         self.folder1 = join(data_dir, folder1)
         self.folder2 = join(data_dir, folder2)
-        self.data_filenames = [join(self.folder1, x) for x in listdir(self.folder1) if is_image_file(x)]
-        self.data_filenames2 = [join(self.folder2, x) for x in listdir(self.folder2) if is_image_file(x)]
+        self.data_filenames = sorted([join(self.folder1, x) for x in listdir(self.folder1) if is_image_file(x)])
+        self.data_filenames2 = sorted([join(self.folder2, x) for x in listdir(self.folder2) if is_image_file(x)])
 
     def __getitem__(self, index):
         im1 = load_img(self.data_filenames[index])
