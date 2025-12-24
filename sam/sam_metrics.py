@@ -26,7 +26,7 @@ import safetensors.torch as sf
 from huggingface_hub import hf_hub_download
 
 from net.CIDNet import CIDNet
-from measure import metrics_one, calculate_psnr, calculate_ssim
+from sam.measure import metrics_one, calculate_psnr, calculate_ssim
 
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 

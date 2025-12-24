@@ -13,7 +13,7 @@ from data.data import *
 from loss.losses import *
 from data.scheduler import *
 from datetime import datetime
-from measure import metrics
+from sam.measure import metrics
 import dist
 from sam.utils import Tee, checkpoint, compute_model_complexity
 from torch.utils.tensorboard import SummaryWriter

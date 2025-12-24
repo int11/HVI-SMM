@@ -3,7 +3,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data.data import *
 from loss.losses import *
-from measure import metrics
+from sam.measure import metrics
 import dist
 from sam.options import option, load_datasets
 import safetensors.torch as sf
