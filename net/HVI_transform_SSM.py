@@ -61,7 +61,8 @@ class RGB_HVI(nn.Module):
         H = torch.clamp(H,-1,1)
         V = torch.clamp(V,-1,1)
         I = torch.clamp(I,0,1)
-        
+        I = I * alpha_i
+
         v = I
         k = self.this_k
         color_sensitive = ((v * 0.5 * pi).sin() + eps).pow(k)
@@ -78,7 +79,7 @@ class RGB_HVI(nn.Module):
             alpha_s = alpha_s.squeeze(1)
         
         s = s * alpha_s
-
+        
         s = torch.clamp(s,0,1)
         v = torch.clamp(v,0,1)
         
@@ -128,5 +129,4 @@ class RGB_HVI(nn.Module):
         b = b.unsqueeze(1)
         rgb = torch.cat([r, g, b], dim=1)
 
-        rgb = rgb * alpha_i
         return rgb

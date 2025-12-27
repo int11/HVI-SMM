@@ -190,4 +190,89 @@ class SSIM(torch.nn.Module):
         return (1. - map_ssim(img1, img2, window, self.window_size, channel, self.size_average)) * self.weight
 
 
+class CIDNetCombinedLoss(nn.Module):
+    """
+    CIDNet SSM을 위한 통합 Loss 클래스
+    - RGB/HVI 공간에서 L1, SSIM, Edge, Perceptual loss 계산
+    - Intermediate Supervision (I_base) 지원
+    - 중복 코드 제거 및 깔끔한 인터페이스 제공
+    """
+    def __init__(self, 
+                 rgb_to_hvi_fn,
+                 L1_weight=1.0,
+                 D_weight=0.5,
+                 E_weight=50.0,
+                 P_weight=1e-2,
+                 HVI_weight=1.0,
+                 intermediate_weight=0.5):
+        super(CIDNetCombinedLoss, self).__init__()
+        self.rgb_to_hvi_fn = rgb_to_hvi_fn
+        self.HVI_weight = HVI_weight
+        self.intermediate_weight = intermediate_weight
+        
+        # Loss 객체들을 내부에서 생성
+        self.L1_loss = L1Loss(loss_weight=L1_weight, reduction='mean')
+        self.D_loss = SSIM(weight=D_weight)
+        self.E_loss = EdgeLoss(loss_weight=E_weight)
+        # PerceptualLoss는 내부 weight를 P_weight로 설정 (외부에서 별도로 곱하지 않음)
+        self.P_loss = PerceptualLoss(
+            {'conv1_2': 1, 'conv2_2': 1, 'conv3_4': 1, 'conv4_4': 1}, 
+            perceptual_weight=P_weight,  # P_weight를 여기서 적용
+            criterion='mse'
+        )
+    
+    def _compute_single_loss(self, pred_rgb, gt_rgb, gt_hvi):
+        """
+        하나의 RGB 예측값에 대해 RGB/HVI loss 계산
+        
+        Args:
+            pred_rgb: 예측 RGB 이미지
+            gt_rgb: GT RGB 이미지
+            gt_hvi: GT HVI 이미지 (미리 계산됨)
+        
+        Returns:
+            total_loss: RGB loss + HVI_weight * HVI loss
+        """
+        # RGB space loss
+        loss_rgb = (self.L1_loss(pred_rgb, gt_rgb) + 
+                   self.D_loss(pred_rgb, gt_rgb) + 
+                   self.E_loss(pred_rgb, gt_rgb) + 
+                   self.P_loss(pred_rgb, gt_rgb)[0])  # P_weight는 이미 내부에 적용됨
+        
+        # HVI space loss
+        pred_hvi = self.rgb_to_hvi_fn(pred_rgb)
+        loss_hvi = (self.L1_loss(pred_hvi, gt_hvi) + 
+                   self.D_loss(pred_hvi, gt_hvi) + 
+                   self.E_loss(pred_hvi, gt_hvi) + 
+                   self.P_loss(pred_hvi, gt_hvi)[0])  # P_weight는 이미 내부에 적용됨
+        
+        return loss_rgb + self.HVI_weight * loss_hvi
+    
+    def forward(self, output_rgb, output_rgb_base, gt_rgb):
+        """
+        CIDNet SSM의 최종 loss 계산
+        
+        Args:
+            output_rgb: SSM이 적용된 최종 출력 (I_out)
+            output_rgb_base: SSM 없이 기본 alpha만 사용한 출력 (I_base)
+            gt_rgb: Ground truth RGB
+        
+        Returns:
+            total_loss: 최종 loss (final + intermediate)
+        """
+        # GT HVI는 한 번만 계산
+        gt_hvi = self.rgb_to_hvi_fn(gt_rgb)
+        
+        # Final output loss (I_out)
+        loss_final = self._compute_single_loss(output_rgb, gt_rgb, gt_hvi)
+        
+        # Intermediate supervision loss (I_base)
+        if self.intermediate_weight > 0:
+            loss_intermediate = self._compute_single_loss(output_rgb_base, gt_rgb, gt_hvi)
+            total_loss = loss_final + self.intermediate_weight * loss_intermediate
+        else:
+            total_loss = loss_final
+        
+        return total_loss
+
 

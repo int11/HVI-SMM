@@ -18,14 +18,14 @@ def worker_init_fn(worker_id):
 def option():
     # Training settings
     parser = argparse.ArgumentParser(description='CIDNet')
-    parser.add_argument('--batchSize', type=int, default=2, help='training batch size')
-    parser.add_argument('--cropSize', type=int, default=400, help='image crop size (patch size)')
-    parser.add_argument('--nEpochs', type=int, default=1500, help='number of epochs to train for end')
+    parser.add_argument('--batchSize', type=int, default=1, help='training batch size')
+    parser.add_argument('--cropSize', type=int, default=384, help='image crop size (patch size)')
+    parser.add_argument('--nEpochs', type=int, default=500, help='number of epochs to train for end')
     parser.add_argument('--start_epoch', type=int, default=0, help='number of epochs to start, >0 is retrained a pre-trained pth')
     parser.add_argument('--snapshots', type=int, default=10, help='Snapshots for save checkpoints pth')
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning Rate')
     parser.add_argument('--gpu_mode', type=bool, default=True)
-    parser.add_argument('--cuda_visible_devices', type=str, default="1", help='Set CUDA_VISIBLE_DEVICES (e.g., "0,1")')
+    parser.add_argument('--cuda_visible_devices', type=str, default="0", help='Set CUDA_VISIBLE_DEVICES (e.g., "0,1")')
     parser.add_argument('--shuffle', type=bool, default=True)
     parser.add_argument('--threads', type=int, default=4, help='number of threads for dataloader to use')
     parser.add_argument('--seed', type=int, default=1, help='random seed to use. Default=123')
@@ -40,7 +40,7 @@ def option():
     parser.add_argument('--start_warmup', type=bool, default=True, help='turn False to train without warmup') 
 
     # choose which dataset you want to train, please only set one "True"
-    parser.add_argument('--dataset', type=str, default='lol_v1', choices=['lol_v1', 'lolv2_real', 'lolv2_syn', 'lol_blur', 'SID', 'SICE_mix', 'SICE_grad'], help='Choose one dataset to train on')
+    parser.add_argument('--dataset', type=str, default='lolv2_syn', choices=['lol_v1', 'lolv2_real', 'lolv2_syn', 'lol_blur', 'SID', 'SICE_mix', 'SICE_grad'], help='Choose one dataset to train on')
 
     # train datasets
     parser.add_argument('--data_train_lol_blur'     , type=str, default='./datasets/LOL_blur/train')
@@ -67,6 +67,7 @@ def option():
     parser.add_argument('--D_weight',  type=float, default=0.5)
     parser.add_argument('--E_weight',  type=float, default=50.0)
     parser.add_argument('--P_weight',  type=float, default=1e-2)
+    parser.add_argument('--intermediate_weight', type=float, default=0.5, help='Weight for intermediate supervision loss (I_base)')
     
     # use random gamma function (enhancement curve) to improve generalization
     parser.add_argument('--gamma', type=bool, default=False)
@@ -78,7 +79,7 @@ def option():
     parser.add_argument('--grad_clip', type=bool, default=True, help='if gradient fluctuates too much, turn-on it')
 
     # SSM parameters
-    parser.add_argument('--max_scale_factor', type=float, default=1.2, help='Maximum scale factor for SSM module')
+    parser.add_argument('--gamma', type=float, default=0.5, help='Gamma parameter for SSM module (controls adjustment range)')
     return parser
 
 

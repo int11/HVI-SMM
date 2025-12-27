@@ -38,42 +38,29 @@ def init_seed(seed, deterministic=False, benchmark=True):
     return seed
 
 
-def train_one_epoch(model, optimizer, training_data_loader, args, L1_loss, P_loss, E_loss, D_loss):
+def train_one_epoch(model, optimizer, training_data_loader, args, combined_loss):
     import time
     start_time = time.time()
     model.train()
-    total_loss = 0  # 전체 에폭의 손실 합계
-    total_batches = 0  # 전체 배치 수
+    total_loss = 0
+    total_batches = 0
     torch.autograd.set_detect_anomaly(args.grad_detect)
     device = dist.get_device()
     
-    # Get RGB_to_HVI method from the actual model (handle DDP wrapper)
-    actual_model = model.module if hasattr(model, 'module') else model
-    rgb_to_hvi_fn = actual_model.RGB_to_HVI
-    
     for batch_idx, batch in enumerate(training_data_loader, 1):
         im1, im2, path1, path2 = batch[0], batch[1], batch[2], batch[3]
-
-        # Use rank-based device assignment for distributed training
-        
-    
         im1 = im1.to(device)
         im2 = im2.to(device)
         
         # use random gamma function (enhancement curve) to improve generalization
         if args.gamma:
             gamma = random.randint(args.start_gamma,args.end_gamma) / 100.0
-            output_rgb = model(im1 ** gamma)  
+            output_rgb, output_rgb_base = model(im1 ** gamma)  
         else:
-            output_rgb = model(im1)  
-            
-        gt_rgb = im2
+            output_rgb, output_rgb_base = model(im1)
         
-        output_hvi = rgb_to_hvi_fn(output_rgb)
-        gt_hvi = rgb_to_hvi_fn(gt_rgb)
-        loss_hvi = L1_loss(output_hvi, gt_hvi) + D_loss(output_hvi, gt_hvi) + E_loss(output_hvi, gt_hvi) + args.P_weight * P_loss(output_hvi, gt_hvi)[0]
-        loss_rgb = L1_loss(output_rgb, gt_rgb) + D_loss(output_rgb, gt_rgb) + E_loss(output_rgb, gt_rgb) + args.P_weight * P_loss(output_rgb, gt_rgb)[0]
-        loss = loss_rgb + args.HVI_weight * loss_hvi
+        # 통합 loss 계산 (RGB/HVI + Intermediate Supervision 모두 포함)
+        loss = combined_loss(output_rgb, output_rgb_base, im2)
         
         if args.grad_clip:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 0.01, norm_type=2)
@@ -82,13 +69,12 @@ def train_one_epoch(model, optimizer, training_data_loader, args, L1_loss, P_los
         loss.backward()
         optimizer.step()
         
-        # 손실과 배치 수 누적
         total_loss += loss.item()
         total_batches += 1
         
     # 에폭 완료 후 샘플 이미지 저장 (마지막 배치의 결과)
     output_img = transforms.ToPILImage()((output_rgb)[0].squeeze(0))
-    gt_img = transforms.ToPILImage()((gt_rgb)[0].squeeze(0))
+    gt_img = transforms.ToPILImage()((im2)[0].squeeze(0))
     if not os.path.exists(args.val_folder+'training'):          
         os.mkdir(args.val_folder+'training') 
     output_img.save(args.val_folder+'training/test.png')
@@ -144,20 +130,32 @@ def make_scheduler(optimizer, args):
 
     return scheduler
 
-def init_loss(args):
-    L1_weight = args.L1_weight
-    D_weight = args.D_weight 
-    E_weight = args.E_weight 
-    P_weight = 1.0
+def init_loss(args, rgb_to_hvi_fn):
+    """
+    Loss 함수 초기화 - CIDNetCombinedLoss 사용
     
-    # Use specific device if provided, otherwise use rank-based device
+    Args:
+        args: 학습 설정
+        rgb_to_hvi_fn: RGB를 HVI로 변환하는 함수
+    
+    Returns:
+        combined_loss: 통합 loss 객체
+    """
     device = dist.get_device()
     
-    L1_loss= L1Loss(loss_weight=L1_weight, reduction='mean').to(device)
-    D_loss = SSIM(weight=D_weight).to(device)
-    E_loss = EdgeLoss(loss_weight=E_weight).to(device)
-    P_loss = PerceptualLoss({'conv1_2': 1, 'conv2_2': 1,'conv3_4': 1,'conv4_4': 1}, perceptual_weight = P_weight ,criterion='mse').to(device)
-    return L1_loss,P_loss,E_loss,D_loss
+    # 통합 loss 생성 (내부에서 모든 loss 객체 생성)
+    from loss.losses import CIDNetCombinedLoss
+    combined_loss = CIDNetCombinedLoss(
+        rgb_to_hvi_fn=rgb_to_hvi_fn,
+        L1_weight=args.L1_weight,
+        D_weight=args.D_weight,
+        E_weight=args.E_weight,
+        P_weight=args.P_weight,
+        HVI_weight=args.HVI_weight,
+        intermediate_weight=args.intermediate_weight
+    ).to(device)
+    
+    return combined_loss
 
 
 def train(rank, args):
@@ -200,7 +198,9 @@ def train(rank, args):
             flops, params = compute_model_complexity(model, input_size=(1, 3, args.cropSize, args.cropSize))
             print(f"Model FLOPs: {flops}, Params: {params}")
 
-        L1_loss, P_loss, E_loss, D_loss = init_loss(args)
+        # Get RGB_to_HVI function for loss calculation
+        rgb_to_hvi_fn = model.RGB_to_HVI
+        combined_loss = init_loss(args, rgb_to_hvi_fn)
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
         
         # Load checkpoint if start_epoch > 0
@@ -254,7 +254,7 @@ def train(rank, args):
             if dist.is_dist_available_and_initialized():
                 training_data_loader.sampler.set_epoch(epoch)
                 
-            avg_loss, epoch_time = train_one_epoch(model, optimizer, training_data_loader, args, L1_loss, P_loss, E_loss, D_loss)
+            avg_loss, epoch_time = train_one_epoch(model, optimizer, training_data_loader, args, combined_loss)
             scheduler.step()
             
             # Log basic epoch info for all processes

@@ -36,7 +36,7 @@ def eval(model, testing_data_loader, alpha_predict=True, base_alpha_s=1.0, base_
             input, gt, name = batch[0], batch[1], batch[2]
             input = input.to(device)
             if isinstance(model, CIDNet_SSM):
-                output = model(input, alpha_predict=alpha_predict, base_alpha_s=base_alpha_s, base_alpha_i=base_alpha_i)
+                output, _ = model(input, alpha_predict=alpha_predict, base_alpha_s=base_alpha_s, base_alpha_i=base_alpha_i)
             elif isinstance(model, (CIDNet, CIDNet_fix)):
                 output = model(input)
 

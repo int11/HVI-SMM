@@ -4,14 +4,13 @@ from net.HVI_transform_SSM import RGB_HVI
 from net.transformer_utils import *
 from net.LCA import *
 from huggingface_hub import PyTorchModelHubMixin
-from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
 from huggingface_hub import hf_hub_download
 import safetensors.torch as sf
 
 
 class SSM(nn.Module):
     # Spatial Modulation Module(SSM)
-    def __init__(self, in_channels, max_scale_factor=1.2):
+    def __init__(self, in_channels, gamma=0.5):
         super(SSM, self).__init__()
         self.predictor = nn.Sequential(
             nn.ReplicationPad2d(1),
@@ -19,26 +18,24 @@ class SSM(nn.Module):
             nn.GroupNorm(1, in_channels // 2),
             nn.SiLU(inplace=True),
             nn.ReplicationPad2d(1),
-            nn.Conv2d(in_channels // 2, 4, 3, stride=1, padding=0, bias=False),  # output 4 channels for alpha_s, alpha_i_r, alpha_i_g, alpha_i_b
-            nn.Sigmoid()
+            nn.Conv2d(in_channels // 2, 2, 3, stride=1, padding=0, bias=False),  # output 2 channels for alpha_s, alpha_i
+            nn.Tanh()  # Tanh 출력 범위: [-1, 1]
         )
-        self.max_scale_factor = max_scale_factor  # 최대 스케일 배수 (예: 2.0이면 0.5~2.0 범위)
+        self.gamma = gamma  # Tanh 스케일링 파라미터 (예: 0.5이면 범위 [0.5, 1.5])
 
     def forward(self, x, base_alpha_s=1.0, base_alpha_i=1.0):
-        alpha_maps = self.predictor(x)
+        alpha_maps = self.predictor(x)  # Tanh 출력: [-1, 1]
 
-        # [목표] Sigmoid 출력(0~1)을 동적 스케일 범위로 변환합니다.
-        # max_scale_factor = 2.0이면 범위는 [0.5, 2.0]
-        # max_scale_factor = 1.5이면 범위는 [0.67, 1.5] (1/1.5 = 0.67)
-        scale_min = 1.0 / self.max_scale_factor
-        scale_max = self.max_scale_factor
-        scale_range = scale_max - scale_min
-        scale_factor = alpha_maps * scale_range + scale_min
+        # [새로운 방식] Tanh(x) * gamma + 1
+        # gamma = 0.5이면 범위: [-0.5 + 1, 0.5 + 1] = [0.5, 1.5]
+        # CIDNet이 태업하지 못하고 최소한 원본에 근접한 출력을 내야 함
+        # SSM은 미세 조정만 가능
+        scale_factor = alpha_maps * self.gamma + 1.0
 
         # 예측된 스케일 팩터를 각 기준 알파 값에 곱해줍니다.
         alpha_s = base_alpha_s * scale_factor[:, 0, :, :]
-        alpha_i = base_alpha_i * scale_factor[:, 1:4, :, :]
-        return alpha_s, alpha_i  # alpha_s: (batch, 1, h, w), alpha_i: (batch, 3, h, w)
+        alpha_i = base_alpha_i * scale_factor[:, 1, :, :]
+        return alpha_s, alpha_i  # alpha_s: (batch, 1, h, w), alpha_i: (batch, 1, h, w)
 
 
 class CIDNet_SSM(nn.Module, PyTorchModelHubMixin):
@@ -48,13 +45,12 @@ class CIDNet_SSM(nn.Module, PyTorchModelHubMixin):
                  norm=False,
                  cidnet_model_path="Fediory/HVI-CIDNet-LOLv1-woperc",
                  sam_model_path="Gourieff/ReActor/models/sams/sam_vit_b_01ec64.pth",
-                 max_scale_factor=1.2
+                 gamma=0.5
         ):
         super(CIDNet_SSM, self).__init__()
 
         [ch1, ch2, ch3, ch4] = channels
         [head1, head2, head3, head4] = heads
-        self.max_scale_factor = max_scale_factor
         # HV_ways
         self.HVE_block0 = nn.Sequential(
             nn.ReplicationPad2d(1),
@@ -129,7 +125,7 @@ class CIDNet_SSM(nn.Module, PyTorchModelHubMixin):
         #     param.requires_grad = False
         
 
-        self.alpha_predictor = SSM(in_channels=ch2*2, max_scale_factor=self.max_scale_factor)
+        self.alpha_predictor = SSM(in_channels=ch2*2, gamma=gamma)
 
 
     def forward(self, x, alpha_predict=True, base_alpha_s=1.0, base_alpha_i=1.0):
@@ -184,15 +180,18 @@ class CIDNet_SSM(nn.Module, PyTorchModelHubMixin):
         
         output_hvi = torch.cat([hv_0, i_dec0], dim=1) + hvi
 
+        # I_base: SMM 없이 기본 alpha 값만으로 변환한 결과 (Intermediate Supervision용)
+        output_rgb_base = self.trans.HVI_to_RGB(output_hvi, base_alpha_s, base_alpha_i)
 
         if alpha_predict:
             alpha_input = torch.cat([i_dec1, hv_1], dim=1)  # (batch, ch1*2, h, w)
             alpha_s, alpha_i = self.alpha_predictor(alpha_input, base_alpha_s, base_alpha_i)
             output_rgb = self.trans.HVI_to_RGB(output_hvi, alpha_s, alpha_i)
         else:
-            output_rgb = self.trans.HVI_to_RGB(output_hvi, base_alpha_s, base_alpha_i)
+            output_rgb = output_rgb_base
 
-        return output_rgb
+        # CIDNet_SSM은 항상 (output_rgb, output_rgb_base) 튜플 반환
+        return output_rgb, output_rgb_base
     
     def RGB_to_HVI(self,x):
         hvi = self.trans.RGB_to_HVI(x)
