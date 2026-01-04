@@ -76,7 +76,7 @@ def train_one_epoch(model, optimizer, training_data_loader, args, loss_f):
     output_img = transforms.ToPILImage()((output_rgb)[0].squeeze(0))
     gt_img = transforms.ToPILImage()((im2)[0].squeeze(0))
     if not os.path.exists(args.val_folder+'training'):          
-        os.mkdir(args.val_folder+'training') 
+        os.makedirs(args.val_folder+'training') 
     output_img.save(args.val_folder+'training/test.png')
     gt_img.save(args.val_folder+'training/gt.png')
     
