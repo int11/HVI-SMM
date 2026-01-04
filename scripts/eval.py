@@ -3,9 +3,9 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data.data import *
 from loss.losses import *
-from sam.measure import metrics
+from scripts.measure import metrics
 import dist
-from sam.options import option, load_datasets
+from scripts.options import option, load_datasets
 import safetensors.torch as sf
 from huggingface_hub import hf_hub_download
 from net.CIDNet_SSM import CIDNet_SSM

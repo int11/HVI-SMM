@@ -7,14 +7,14 @@ from torchvision import transforms
 import torch.optim as optim
 from net.CIDNet_SSM import CIDNet as CIDNet_SSM
 from data.options import option, load_datasets
-from sam.eval import eval
+from scripts.eval import eval
 from data.data import *
 from loss.losses import *
 from data.scheduler import *
 from datetime import datetime
-from sam.measure import metrics
+from scripts.measure import metrics
 import dist
-from sam.utils import Tee, checkpoint
+from scripts.utils import Tee, checkpoint
 
 
 def train_one_epoch(model, optimizer, cidnet_loader, ssm_loader, args, L1_loss, P_loss, E_loss, D_loss):

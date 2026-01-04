@@ -7,15 +7,15 @@ import inspect
 from torchvision import transforms
 import torch.optim as optim
 import importlib
-from sam.options import option, load_datasets
-from sam.eval import eval
+from scripts.options import option, load_datasets
+from scripts.eval import eval
 from data.data import *
 from loss.losses import CIDNetCombinedLoss, CIDNetWithIntermediateLoss
 from data.scheduler import *
 from datetime import datetime
-from sam.measure import metrics
+from scripts.measure import metrics
 import dist
-from sam.utils import Tee, checkpoint, compute_model_complexity
+from scripts.utils import Tee, checkpoint, compute_model_complexity
 from torch.utils.tensorboard import SummaryWriter
 
 
