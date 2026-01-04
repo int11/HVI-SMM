@@ -124,11 +124,26 @@ class CIDNet_SSM(nn.Module, PyTorchModelHubMixin):
         # for param in self.parameters():
         #     param.requires_grad = False
         
+        # Alpha configuration
+        self.alpha_predict = True
+        self.base_alpha_s = 1.0
+        self.base_alpha_i = 1.0
+        self.alpha_rgb = 1.0
 
         self.alpha_predictor = SSM(in_channels=ch2*2, gamma=gamma)
+    
+    def set_alpha_predict(self, alpha_predict):
+        """Set whether to predict alpha values"""
+        self.alpha_predict = alpha_predict
+    
+    def set_base_alpha(self, base_alpha_s=1.0, base_alpha_i=1.0, alpha_rgb=1.0):
+        """Set base alpha values for S, I channels and RGB scaling"""
+        self.base_alpha_s = base_alpha_s
+        self.base_alpha_i = base_alpha_i
+        self.alpha_rgb = alpha_rgb
 
 
-    def forward(self, x, alpha_predict=True, base_alpha_s=1.0, base_alpha_i=1.0):
+    def forward(self, x):
         dtypes = x.dtype
         hvi = self.trans.RGB_to_HVI(x)
         i = hvi[:,2,:,:].unsqueeze(1).to(dtypes)
@@ -181,12 +196,12 @@ class CIDNet_SSM(nn.Module, PyTorchModelHubMixin):
         output_hvi = torch.cat([hv_0, i_dec0], dim=1) + hvi
 
         # I_base: SMM 없이 기본 alpha 값만으로 변환한 결과 (Intermediate Supervision용)
-        output_rgb_base = self.trans.HVI_to_RGB(output_hvi, base_alpha_s, base_alpha_i)
+        output_rgb_base = self.trans.HVI_to_RGB(output_hvi, self.base_alpha_s, self.base_alpha_i, self.alpha_rgb)
 
-        if alpha_predict:
+        if self.alpha_predict:
             alpha_input = torch.cat([i_dec1, hv_1], dim=1)  # (batch, ch1*2, h, w)
-            alpha_s, alpha_i = self.alpha_predictor(alpha_input, base_alpha_s, base_alpha_i)
-            output_rgb = self.trans.HVI_to_RGB(output_hvi, alpha_s, alpha_i)
+            alpha_s, alpha_i = self.alpha_predictor(alpha_input, self.base_alpha_s, self.base_alpha_i)
+            output_rgb = self.trans.HVI_to_RGB(output_hvi, alpha_s, alpha_i, self.alpha_rgb)
         else:
             output_rgb = output_rgb_base
 

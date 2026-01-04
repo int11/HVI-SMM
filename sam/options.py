@@ -8,6 +8,18 @@ from data.eval_sets import DatasetFromFolderEval, SICEDatasetFromFolderEval
 from data.SICE_blur_SID import LOLBlurDatasetFromFolder, SIDDatasetFromFolder, SICEDatasetFromFolder
 
 
+def str_to_bool(v):
+    """Convert string to boolean"""
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError(f'Boolean value expected, got: {v}')
+
+
 def worker_init_fn(worker_id):
     """Initialize random seed for each worker"""
     worker_seed = np.random.get_state()[1][0] + worker_id
@@ -24,20 +36,20 @@ def option():
     parser.add_argument('--start_epoch', type=int, default=0, help='number of epochs to start, >0 is retrained a pre-trained pth')
     parser.add_argument('--snapshots', type=int, default=10, help='Snapshots for save checkpoints pth')
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning Rate')
-    parser.add_argument('--gpu_mode', type=bool, default=True)
+    parser.add_argument('--gpu_mode', type=str_to_bool, default=True)
     parser.add_argument('--cuda_visible_devices', type=str, default="0", help='Set CUDA_VISIBLE_DEVICES (e.g., "0,1")')
-    parser.add_argument('--shuffle', type=bool, default=True)
+    parser.add_argument('--shuffle', type=str_to_bool, default=True)
     parser.add_argument('--threads', type=int, default=4, help='number of threads for dataloader to use')
     parser.add_argument('--seed', type=int, default=1, help='random seed to use. Default=123')
 
     # choose a scheduler
-    parser.add_argument('--model_file', type=str, default='net/CIDNet_fix.py', help='Path to model file (e.g., net/CIDNet_fix.py)')
-    parser.add_argument('--cos_restart_cyclic', type=bool, default=False)
-    parser.add_argument('--cos_restart', type=bool, default=True)
+    parser.add_argument('--model_file', type=str, default='net/CIDNet_SSM.py', help='Path to model file (e.g., net/CIDNet_fix.py)')
+    parser.add_argument('--cos_restart_cyclic', type=str_to_bool, default=False)
+    parser.add_argument('--cos_restart', type=str_to_bool, default=True)
 
     # warmup training
     parser.add_argument('--warmup_epochs', type=int, default=3, help='warmup_epochs')
-    parser.add_argument('--start_warmup', type=bool, default=True, help='turn False to train without warmup') 
+    parser.add_argument('--start_warmup', type=str_to_bool, default=True, help='turn False to train without warmup') 
 
     # choose which dataset you want to train, please only set one "True"
     parser.add_argument('--dataset', type=str, default='lolv2_syn', choices=['lol_v1', 'lolv2_real', 'lolv2_syn', 'lol_blur', 'SID', 'SICE_mix', 'SICE_grad'], help='Choose one dataset to train on')
@@ -68,18 +80,19 @@ def option():
     parser.add_argument('--E_weight',  type=float, default=50.0)
     parser.add_argument('--P_weight',  type=float, default=1e-2)
     parser.add_argument('--intermediate_weight', type=float, default=0.5, help='Weight for intermediate supervision loss (I_base)')
+    parser.add_argument('--use_gt_mean_loss', type=str, default='hvi', choices=['none', 'rgb', 'hvi'], help='Loss type: none (no GT-Mean Loss), rgb (GT-Mean Loss), hvi (Intensity Mean Loss)')
     
     # use random gamma function (enhancement curve) to improve generalization
-    parser.add_argument('--gamma', type=bool, default=False)
-    parser.add_argument('--start_gamma', type=int, default=60)
-    parser.add_argument('--end_gamma', type=int, default=120)
-
-    # auto grad, turn off to speed up training
-    parser.add_argument('--grad_detect', type=bool, default=False, help='if gradient explosion occurs, turn-on it')
-    parser.add_argument('--grad_clip', type=bool, default=True, help='if gradient fluctuates too much, turn-on it')
+    parser.add_argument('--use_random_gamma', type=str_to_bool, default=False, help='Use random gamma augmentation during training')
+    parser.add_argument('--start_gamma', type=int, default=60, help='Start gamma value for augmentation (60 = 0.6)')
+    parser.add_argument('--end_gamma', type=int, default=120, help='End gamma value for augmentation (120 = 1.2)')
 
     # SSM parameters
-    parser.add_argument('--gamma', type=float, default=0.5, help='Gamma parameter for SSM module (controls adjustment range)')
+    parser.add_argument('--ssm_scale_range', type=float, default=0.5, help='SSM scale adjustment range (0.5 means [0.5x, 1.5x])')
+
+    # auto grad, turn off to speed up training
+    parser.add_argument('--grad_detect', type=str_to_bool, default=False, help='if gradient explosion occurs, turn-on it')
+    parser.add_argument('--grad_clip', type=str_to_bool, default=True, help='if gradient fluctuates too much, turn-on it')
     return parser
 
 

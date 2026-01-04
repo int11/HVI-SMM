@@ -10,7 +10,7 @@ import importlib
 from sam.options import option, load_datasets
 from sam.eval import eval
 from data.data import *
-from loss.losses import CIDNetCombinedLoss, CIDNetWithIntermediateLoss
+from loss.losses import CIDNetCombinedLoss
 from data.scheduler import *
 from datetime import datetime
 from sam.measure import metrics
@@ -18,26 +18,10 @@ import dist
 from sam.utils import Tee, checkpoint, compute_model_complexity
 from torch.utils.tensorboard import SummaryWriter
 
+# Import functions from train.py
+from train import init_seed, make_scheduler
 
-def init_seed(seed, deterministic=False, benchmark=True):
-    print(f"Using seed: {seed}")
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)    
-    np.random.seed(seed)
-    random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    
-    if deterministic:
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-    else:
-        torch.backends.cudnn.deterministic = False
-        torch.backends.cudnn.benchmark = benchmark
-    return seed
 
-    
 def train_one_epoch(model, optimizer, training_data_loader, args, loss_f):
     import time
     start_time = time.time()
@@ -55,12 +39,12 @@ def train_one_epoch(model, optimizer, training_data_loader, args, loss_f):
         # use random gamma function (enhancement curve) to improve generalization
         if args.use_random_gamma:
             gamma = random.randint(args.start_gamma, args.end_gamma) / 100.0
-            output_rgb, output_rgb_base = model(im1 ** gamma)  
+            output_rgb = model(im1 ** gamma)  
         else:
-            output_rgb, output_rgb_base = model(im1)
+            output_rgb = model(im1)
         
-        # 통합 loss 계산 (RGB/HVI + Intermediate Supervision 모두 포함)
-        loss = loss_f(output_rgb, output_rgb_base, im2)
+        # Loss 계산 (CIDNetCombinedLoss만 사용, intermediate supervision 없음)
+        loss = loss_f(output_rgb, im2)
         
         if args.grad_clip:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 0.01, norm_type=2)
@@ -85,66 +69,21 @@ def train_one_epoch(model, optimizer, training_data_loader, args, loss_f):
     return avg_loss, elapsed_time
 
 
-def make_scheduler(optimizer, args):
-    # Calculate last_epoch for resumed training
-    cosine_last_epoch = -1 if args.start_epoch == 0 else args.start_epoch - 1 - args.warmup_epochs
-    
-    if args.cos_restart_cyclic:
-        # CosineAnnealingRestartCyclicLR scheduler
-        periods = [(args.nEpochs//4)-args.warmup_epochs, (args.nEpochs*3)//4] if args.start_warmup else [args.nEpochs//4, (args.nEpochs*3)//4]
-        scheduler_step = CosineAnnealingRestartCyclicLR(
-            optimizer=optimizer, 
-            periods=periods, 
-            restart_weights=[1,1], 
-            eta_mins=[0.0002,0.0000001],
-            last_epoch=cosine_last_epoch
-        )
-        
-    elif args.cos_restart:
-        # CosineAnnealingRestartLR scheduler
-        periods = [args.nEpochs - args.warmup_epochs] if args.start_warmup else [args.nEpochs]
-        scheduler_step = CosineAnnealingRestartLR(
-            optimizer=optimizer, 
-            periods=periods, 
-            restart_weights=[1], 
-            eta_min=1e-7,
-            last_epoch=cosine_last_epoch
-        )
-        
-    else:
-        raise Exception("should choose a scheduler")
-    
-    # Create main scheduler (with or without warmup)
-    if args.start_warmup:
-        scheduler = GradualWarmupScheduler(
-            optimizer, 
-            multiplier=1, 
-            total_epoch=args.warmup_epochs, 
-            after_scheduler=scheduler_step
-        )
-        # Set main scheduler last_epoch for resumed training
-        if args.start_epoch > 0:
-            scheduler.last_epoch = args.start_epoch - 1
-    else:
-        scheduler = scheduler_step
-
-    return scheduler
-
 def init_loss(args, trans):
     """
-    Loss 함수 초기화
+    Loss 함수 초기화 (CIDNetCombinedLoss만 사용)
     
     Args:
         args: 학습 설정
         trans: RGB_to_HVI, HVI_to_RGB 변환 객체
     
     Returns:
-        loss_fn
+        loss_fn: CIDNetCombinedLoss
     """
     device = dist.get_device()
     
-    # 기본 loss 생성
-    base_loss = CIDNetCombinedLoss(
+    # 기본 loss만 생성 (CIDNetCombinedLoss)
+    loss_fn = CIDNetCombinedLoss(
         trans=trans,
         L1_weight=args.L1_weight,
         D_weight=args.D_weight,
@@ -152,11 +91,6 @@ def init_loss(args, trans):
         P_weight=args.P_weight,
         HVI_weight=args.HVI_weight,
         use_gt_mean_loss=args.use_gt_mean_loss
-    ).to(device)
-    
-    loss_fn = CIDNetWithIntermediateLoss(
-        base_loss_fn=base_loss,
-        intermediate_weight=args.intermediate_weight
     ).to(device)
     
     return loss_fn

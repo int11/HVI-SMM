@@ -14,17 +14,18 @@ from net.CIDNet_fix import CIDNet_fix
 from torchvision.transforms import ToPILImage
 
 
-def eval(model, testing_data_loader, alpha_predict=True, base_alpha_s=1.0, base_alpha_i=1.0):
+def eval(model, testing_data_loader, alpha_predict=True, base_alpha_s=1.0, base_alpha_i=1.0, alpha_rgb=1.0):
     torch.set_grad_enabled(False)
     
     model = dist.de_parallel(model)
     model.eval()
 
-    if isinstance(model, (CIDNet, CIDNet_fix)):
-        model.trans.gated = True
-        model.trans.gated2 = True
-        model.trans.alpha_s = base_alpha_s
-        model.trans.alpha_i = base_alpha_i
+    # Set alpha parameters using setter functions
+    if isinstance(model, CIDNet_SSM):
+        model.set_alpha_predict(alpha_predict)
+        model.set_base_alpha(base_alpha_s, base_alpha_i, alpha_rgb)
+    elif isinstance(model, (CIDNet, CIDNet_fix)):
+        model.set_base_alpha(base_alpha_s, base_alpha_i, alpha_rgb)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -36,7 +37,7 @@ def eval(model, testing_data_loader, alpha_predict=True, base_alpha_s=1.0, base_
             input, gt, name = batch[0], batch[1], batch[2]
             input = input.to(device)
             if isinstance(model, CIDNet_SSM):
-                output, _ = model(input, alpha_predict=alpha_predict, base_alpha_s=base_alpha_s, base_alpha_i=base_alpha_i)
+                output, _ = model(input)
             elif isinstance(model, (CIDNet, CIDNet_fix)):
                 output = model(input)
 
@@ -84,6 +85,7 @@ if __name__ == '__main__':
     
     parser.add_argument('--base_alpha_s', type=float, default=1.0, help='Base alpha_s parameter for CIDNet')
     parser.add_argument('--base_alpha_i', type=float, default=1.3, help='Base alpha_i parameter for CIDNet')
+    parser.add_argument('--alpha_rgb', type=float, default=1.0, help='RGB scaling factor')
     parser.add_argument('--use_GT_mean', type=bool, default=False, help='Use the mean of GT to rectify the output of the model')
     args = parser.parse_args()
 
@@ -101,10 +103,10 @@ if __name__ == '__main__':
     print(f"Loaded base CIDNet model from {args.cidnet_model}")
 
     # Evaluate - CIDNet_sam with alpha prediction
-    output_list, gt_list = eval(eval_net, testing_data_loader, alpha_predict=True, base_alpha_s=args.base_alpha_s, base_alpha_i=args.base_alpha_i)
+    output_list, gt_list = eval(eval_net, testing_data_loader, alpha_predict=True, base_alpha_s=args.base_alpha_s, base_alpha_i=args.base_alpha_i, alpha_rgb=args.alpha_rgb)
     
     # Evaluate - Base CIDNet (without alpha prediction)
-    output_base_list, gt_list_base = eval(cidnet_base, testing_data_loader, alpha_predict=False, base_alpha_s=args.base_alpha_s, base_alpha_i=args.base_alpha_i)
+    output_base_list, gt_list_base = eval(cidnet_base, testing_data_loader, alpha_predict=False, base_alpha_s=args.base_alpha_s, base_alpha_i=args.base_alpha_i, alpha_rgb=args.alpha_rgb)
     
     # Calculate metrics for CIDNet_sam
     print("\n" + "="*60)

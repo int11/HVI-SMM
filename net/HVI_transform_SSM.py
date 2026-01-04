@@ -42,7 +42,7 @@ class RGB_HVI(nn.Module):
         xyz = torch.cat([H, V, I],dim=1)
         return xyz
 
-    def HVI_to_RGB(self, img, alpha_s=1.0, alpha_i=1.0):
+    def HVI_to_RGB(self, img, alpha_s=1.0, alpha_i=1.0, alpha_rgb=1.0):
         """
         Convert HVI color space back to RGB with adaptive saturation and intensity scaling.
         
@@ -129,4 +129,4 @@ class RGB_HVI(nn.Module):
         b = b.unsqueeze(1)
         rgb = torch.cat([r, g, b], dim=1)
 
-        return rgb
+        return rgb * alpha_rgb
