@@ -118,20 +118,18 @@ class PerceptualLoss(nn.Module):
         else:
             raise NotImplementedError(f'{criterion} criterion has not been supported.')
 
-    def forward(self, x, gt):
-        """Forward function.
-
-        Args:
-            x (Tensor): Input tensor with shape (n, c, h, w).
-            gt (Tensor): Ground-truth tensor with shape (n, c, h, w).
-
-        Returns:
-            Tensor: Forward results.
-        """
-        # extract vgg features
+    def extract_features(self, x):
+        """Extract VGG features (for caching GT features)."""
+        with torch.no_grad():
+            return self.vgg(x)
+    
+    def forward_with_gt_features(self, x, gt_features):
+        """Forward with pre-computed GT features (faster)."""
         x_features = self.vgg(x)
-        gt_features = self.vgg(gt.detach())
-
+        return self._compute_loss(x_features, gt_features)
+    
+    def _compute_loss(self, x_features, gt_features):
+        """Compute perceptual and style loss from features."""
         # calculate perceptual loss
         if self.perceptual_weight > 0:
             percep_loss = 0
@@ -159,6 +157,23 @@ class PerceptualLoss(nn.Module):
             style_loss = None
 
         return percep_loss, style_loss
+
+    def forward(self, x, gt):
+        """Forward function.
+
+        Args:
+            x (Tensor): Input tensor with shape (n, c, h, w).
+            gt (Tensor): Ground-truth tensor with shape (n, c, h, w).
+
+        Returns:
+            Tensor: Forward results.
+        """
+        # extract vgg features
+        x_features = self.vgg(x)
+        with torch.no_grad():
+            gt_features = self.vgg(gt.detach())
+        
+        return self._compute_loss(x_features, gt_features)
 
 
 
@@ -235,27 +250,38 @@ class CIDNetCombinedLoss(nn.Module):
         gray = F.conv2d(img, self.grayscale_weight, bias=None)
         return torch.mean(gray, dim=(2, 3)).squeeze(1)
 
-    def KL_div(self, mu_1, mu_2, sigma_1, sigma_2):
-        # KL Divergence 계산 수식
+    def KL_div(self, mu_1, sigma_1, mu_2, sigma_2):
+        """
+        가우시안 분포 간의 KL Divergence 계산.
+        
+        두 정규분포 P(mu_1, sigma_1)과 Q(mu_2, sigma_2) 간의 KL Divergence D_KL(P || Q)를 계산합니다.
+        
+        Args:
+            mu_1, sigma_1: P 분포(첫 번째 분포)의 평균과 표준편차
+            mu_2, sigma_2: Q 분포(두 번째 분포)의 평균과 표준편차
+        
+        Returns:
+            D_KL(P || Q) = log(sigma_2/sigma_1) + (sigma_1^2 + (mu_1-mu_2)^2)/(2*sigma_2^2) - 0.5
+        """
         return torch.log(sigma_2 / sigma_1) + 0.5 * (sigma_1**2 + (mu_1 - mu_2)**2) / sigma_2**2 - 0.5
 
-    def _compute_basic_loss(self, pred_rgb, pred_hvi, gt_rgb, gt_hvi):
+    def _compute_basic_loss(self, pred_rgb, pred_hvi, gt_rgb, gt_hvi, gt_features_rgb, gt_features_hvi):
         """기존 CIDNet의 Loss 계산 (L1 + SSIM + Edge + Perceptual)"""
         # RGB space loss
         loss_rgb = (self.L1_loss(pred_rgb, gt_rgb) + 
                    self.D_loss(pred_rgb, gt_rgb) + 
                    self.E_loss(pred_rgb, gt_rgb) + 
-                   self.P_loss(pred_rgb, gt_rgb)[0])
+                   self.P_loss.forward_with_gt_features(pred_rgb, gt_features_rgb)[0])
         
         # HVI space loss
         loss_hvi = (self.L1_loss(pred_hvi, gt_hvi) + 
                    self.D_loss(pred_hvi, gt_hvi) + 
                    self.E_loss(pred_hvi, gt_hvi) + 
-                   self.P_loss(pred_hvi, gt_hvi)[0])
+                   self.P_loss.forward_with_gt_features(pred_hvi, gt_features_hvi)[0])
         
         return loss_rgb + self.HVI_weight * loss_hvi
 
-    def _compute_gt_mean_loss(self, pred_rgb, pred_hvi, gt_rgb, gt_hvi):
+    def _compute_gt_mean_loss(self, pred_rgb, pred_hvi, gt_rgb, gt_hvi, gt_features_rgb, gt_features_hvi):
         """
         GT-Mean Loss 적용 (RGB 밝기 기반):
         밝기 평균(mu)을 한 번만 계산하여 Weight(W)와 Scaling Factor(m)에 모두 사용
@@ -276,8 +302,8 @@ class CIDNetCombinedLoss(nn.Module):
         sigma_M = torch.sqrt((sigma_gt**2 + sigma_pred**2) / 2)
         
         # 양방향 KL Divergence 계산 (Symmetric)
-        kl_val = 0.5 * self.KL_div(mu_gt_safe, mu_M, sigma_gt, sigma_M) + \
-                 0.5 * self.KL_div(mu_pred_safe, mu_M, sigma_pred, sigma_M)
+        kl_val = 0.5 * self.KL_div(mu_gt_safe, sigma_gt, mu_M, sigma_M) + \
+                 0.5 * self.KL_div(mu_pred_safe, sigma_pred, mu_M, sigma_M)
                  
         # Weight clipping [0, 1] & Broadcasting shape 준비
         W = torch.clamp(kl_val, 0, 1).view(-1, 1, 1, 1)
@@ -289,14 +315,16 @@ class CIDNetCombinedLoss(nn.Module):
         
         # 2. Brightness Aligned Prediction 생성
         pred_aligned_rgb = torch.clamp(m * pred_rgb, 0, 1)
+        pred_aligned_hvi = self.trans.RGB_to_HVI(pred_aligned_rgb)
         
         # 3. Loss 계산
         # Original Term: L(f(x), y)
-        loss_orig = self._compute_basic_loss(pred_rgb, pred_hvi, gt_rgb, gt_hvi)
+        loss_orig = self._compute_basic_loss(pred_rgb, pred_hvi, gt_rgb, gt_hvi, 
+                                             gt_features_rgb, gt_features_hvi)
         
         # Aligned Term: L(m * f(x), y)
-        pred_aligned_hvi = self.trans.RGB_to_HVI(pred_aligned_rgb)
-        loss_aligned = self._compute_basic_loss(pred_aligned_rgb, pred_aligned_hvi, gt_rgb, gt_hvi)
+        loss_aligned = self._compute_basic_loss(pred_aligned_rgb, pred_aligned_hvi, gt_rgb, gt_hvi,
+                                                gt_features_rgb, gt_features_hvi)
         
         # 4. 최종 결합: W * L_orig + (1-W) * L_aligned
         # 배치 내 평균 Weight 사용 (전체 Loss reduction이 mean이므로)
@@ -305,7 +333,7 @@ class CIDNetCombinedLoss(nn.Module):
         
         return total_loss
     
-    def _compute_intensity_mean_loss(self, pred_rgb, pred_hvi, gt_rgb, gt_hvi):
+    def _compute_intensity_mean_loss(self, pred_rgb, pred_hvi, gt_rgb, gt_hvi, gt_features_rgb, gt_features_hvi):
         """
         Intensity Mean Loss 적용 (HVI Intensity 채널 기반):
         HVI의 intensity 채널에서 밝기 평균을 계산하여 GT-Mean Loss 적용
@@ -330,8 +358,8 @@ class CIDNetCombinedLoss(nn.Module):
         sigma_M = torch.sqrt((sigma_gt**2 + sigma_pred**2) / 2)
         
         # 양방향 KL Divergence 계산 (Symmetric)
-        kl_val = 0.5 * self.KL_div(mu_gt_safe, mu_M, sigma_gt, sigma_M) + \
-                 0.5 * self.KL_div(mu_pred_safe, mu_M, sigma_pred, sigma_M)
+        kl_val = 0.5 * self.KL_div(mu_gt_safe, sigma_gt, mu_M, sigma_M) + \
+                 0.5 * self.KL_div(mu_pred_safe, sigma_pred, mu_M, sigma_M)
                  
         # Weight clipping [0, 1] & Broadcasting shape 준비
         W = torch.clamp(kl_val, 0, 1).view(-1, 1, 1, 1)
@@ -350,10 +378,12 @@ class CIDNetCombinedLoss(nn.Module):
         
         # 4. Loss 계산
         # Original Term: L(f(x), y)
-        loss_orig = self._compute_basic_loss(pred_rgb, pred_hvi, gt_rgb, gt_hvi)
+        loss_orig = self._compute_basic_loss(pred_rgb, pred_hvi, gt_rgb, gt_hvi,
+                                             gt_features_rgb, gt_features_hvi)
         
         # Aligned Term: L(aligned(f(x)), y)
-        loss_aligned = self._compute_basic_loss(pred_aligned_rgb, pred_aligned_hvi, gt_rgb, gt_hvi)
+        loss_aligned = self._compute_basic_loss(pred_aligned_rgb, pred_aligned_hvi, gt_rgb, gt_hvi,
+                                                gt_features_rgb, gt_features_hvi)
         
         # 5. 최종 결합: W * L_orig + (1-W) * L_aligned
         # 배치 내 평균 Weight 사용
@@ -362,20 +392,31 @@ class CIDNetCombinedLoss(nn.Module):
         
         return total_loss
     
-    def forward(self, output_rgb, gt_rgb):
+    def forward(self, pred_rgb, gt_rgb, gt_features_rgb=None, gt_features_hvi=None):
         """
         Args:
-            output_rgb: 예측 이미지
+            pred_rgb: 예측 이미지
             gt_rgb: Ground truth RGB
+            gt_features_rgb: Pre-computed VGG features for gt_rgb (optional)
+            gt_features_hvi: Pre-computed VGG features for gt_hvi (optional)
         """
+        # GT 변환
         gt_hvi = self.trans.RGB_to_HVI(gt_rgb)
-        pred_hvi = self.trans.RGB_to_HVI(output_rgb)
-        return self.loss_func(output_rgb, pred_hvi, gt_rgb, gt_hvi)
+        pred_hvi = self.trans.RGB_to_HVI(pred_rgb)
+        
+        # GT features 계산 (None이면 새로 계산)
+        if gt_features_rgb is None:
+            gt_features_rgb = self.P_loss.extract_features(gt_rgb)
+        if gt_features_hvi is None:
+            gt_features_hvi = self.P_loss.extract_features(gt_hvi)
+        
+        return self.loss_func(pred_rgb, pred_hvi, gt_rgb, gt_hvi, gt_features_rgb, gt_features_hvi)
 
 
 class CIDNetWithIntermediateLoss(nn.Module):
     """
     CIDNetCombinedLoss에 Intermediate Supervision을 추가하는 래퍼 클래스
+    최적화: GT features를 캐싱하여 VGG forward 횟수 감소
     """
     def __init__(self, 
                  base_loss_fn,
@@ -389,20 +430,25 @@ class CIDNetWithIntermediateLoss(nn.Module):
         self.base_loss_fn = base_loss_fn
         self.intermediate_weight = intermediate_weight
 
-    def forward(self, output_rgb, output_rgb_base, gt_rgb):
+    def forward(self, pred_rgb_final, pred_rgb_base, gt_rgb):
         """
         Args:
-            output_rgb: SSM이 적용된 최종 출력
-            output_rgb_base: SSM 없이 기본 alpha만 사용한 출력
+            pred_rgb_final: SSM이 적용된 최종 예측 이미지
+            pred_rgb_base: SSM 없이 기본 alpha만 사용한 예측 이미지
             gt_rgb: Ground truth RGB
         """
-        assert output_rgb_base is not None, "output_rgb_base must be provided for intermediate supervision"
+        assert pred_rgb_base is not None, "pred_rgb_base must be provided for intermediate supervision"
         
-        # Final output loss
-        loss_final = self.base_loss_fn(output_rgb, gt_rgb)
+        # GT features 캐싱 (한 번만 계산)
+        gt_hvi = self.base_loss_fn.trans.RGB_to_HVI(gt_rgb)
+        gt_features_rgb = self.base_loss_fn.P_loss.extract_features(gt_rgb)
+        gt_features_hvi = self.base_loss_fn.P_loss.extract_features(gt_hvi)
         
-        # Intermediate supervision loss
-        loss_intermediate = self.base_loss_fn(output_rgb_base, gt_rgb)
+        # Final output loss (캐싱된 GT features 사용)
+        loss_final = self.base_loss_fn(pred_rgb_final, gt_rgb, gt_features_rgb, gt_features_hvi)
+        
+        # Intermediate supervision loss (캐싱된 GT features 재사용)
+        loss_intermediate = self.base_loss_fn(pred_rgb_base, gt_rgb, gt_features_rgb, gt_features_hvi)
         
         # 가중 합
         total_loss = loss_final + self.intermediate_weight * loss_intermediate

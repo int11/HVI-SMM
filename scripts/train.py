@@ -233,23 +233,19 @@ def train(rank, args):
         ssim = []
         lpips = []
         
+
+        
         def eval_and_log(use_GT_mean=False):
-            output_list, gt_list = eval(model, testing_data_loader, alpha_predict=False, base_alpha_s=1.3, base_alpha_i=1.0, alpha_rgb=1.0)
-            avg_psnr, avg_ssim, avg_lpips = metrics(output_list, gt_list, use_GT_mean=use_GT_mean)
-            print("===> Evaluation (use_GT_mean={}, alpha_predict=False, base_alpha_s=1.3, base_alpha_i=1.0) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(use_GT_mean, avg_psnr, avg_ssim, avg_lpips))
-            
-            output_list, gt_list = eval(model, testing_data_loader, alpha_predict=False, base_alpha_s=1.0, base_alpha_i=1.0, alpha_rgb=1.0)
-            avg_psnr, avg_ssim, avg_lpips = metrics(output_list, gt_list, use_GT_mean=use_GT_mean)
-            print("===> Evaluation (use_GT_mean={}, alpha_predict=False, base_alpha_s=1.0, base_alpha_i=1.0) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(use_GT_mean, avg_psnr, avg_ssim, avg_lpips))
-            
-            output_list, gt_list = eval(model, testing_data_loader, alpha_predict=True, base_alpha_s=1.3, base_alpha_i=1.0, alpha_rgb=1.0)
-            avg_psnr, avg_ssim, avg_lpips = metrics(output_list, gt_list, use_GT_mean=use_GT_mean)
-            print("===> Evaluation (use_GT_mean={}, alpha_predict=True, base_alpha_s=1.3, base_alpha_i=1.0) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(use_GT_mean, avg_psnr, avg_ssim, avg_lpips))
-            
-            output_list, gt_list = eval(model, testing_data_loader, alpha_predict=True, base_alpha_s=1.0, base_alpha_i=1.0, alpha_rgb=1.0)
-            avg_psnr, avg_ssim, avg_lpips = metrics(output_list, gt_list, use_GT_mean=use_GT_mean)
-            print("===> Evaluation (use_GT_mean={}, alpha_predict=True, base_alpha_s=1.0, base_alpha_i=1.0) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(use_GT_mean, avg_psnr, avg_ssim, avg_lpips))
-            
+            def evaluate_and_print(alpha_predict, base_alpha_s, base_alpha_i=1.0, alpha_rgb=1.0, use_GT_mean=False):
+                """Evaluate model and print metrics"""
+                output_list, gt_list = eval(model, testing_data_loader, alpha_predict=alpha_predict, base_alpha_s=base_alpha_s, base_alpha_i=base_alpha_i, alpha_rgb=alpha_rgb)
+                avg_psnr, avg_ssim, avg_lpips = metrics(output_list, gt_list, use_GT_mean=use_GT_mean)
+                print("===> Evaluation (use_GT_mean={}, alpha_predict={}, base_alpha_s={}, base_alpha_i={}) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(
+                    use_GT_mean, alpha_predict, base_alpha_s, base_alpha_i, avg_psnr, avg_ssim, avg_lpips))
+                return avg_psnr, avg_ssim, avg_lpips
+    
+            evaluate_and_print(True, base_alpha_s=1.0, base_alpha_i=1.0, alpha_rgb=0.8, use_GT_mean=use_GT_mean)
+            avg_psnr, avg_ssim, avg_lpips = evaluate_and_print(True, base_alpha_s=1.0, base_alpha_i=1.0, alpha_rgb=1.0, use_GT_mean=use_GT_mean)
             return avg_psnr, avg_ssim, avg_lpips
 
 
