@@ -4,7 +4,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data.data import *
 from loss.losses import *
 from scripts.measure import metrics
-import dist
+import scripts.dist as distpts.dist as dist
 from scripts.options import option, load_datasets
 import safetensors.torch as sf
 from huggingface_hub import hf_hub_download

@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from loss.vgg_arch import VGGFeatureExtractor, Registry
 from loss.loss_utils import *
-import dist
+import scripts.dist as distpts.dist as dist
 
 _reduction_modes = ['none', 'mean', 'sum']
 

@@ -3,7 +3,7 @@ import sys
 import torch
 import torchvision.transforms as transforms
 from datetime import datetime
-import dist
+import scripts.dist as distpts.dist as dist
 from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
 from huggingface_hub import hf_hub_download
 from net.CIDNet_SSM import CIDNet_SSM

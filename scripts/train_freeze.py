@@ -13,7 +13,7 @@ from loss.losses import *
 from data.scheduler import *
 from datetime import datetime
 from scripts.measure import metrics
-import dist
+import scripts.dist as distpts.dist as dist
 from scripts.utils import Tee, checkpoint
 
 

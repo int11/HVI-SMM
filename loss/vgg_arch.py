@@ -3,7 +3,7 @@ import torch
 from collections import OrderedDict
 from torch import nn as nn
 from torchvision.models import vgg as vgg
-import dist
+import scripts.dist as distpts.dist as dist
 
 class Registry():
     """
