@@ -14,7 +14,7 @@ from loss.losses import CIDNetCombinedLoss, CIDNetWithIntermediateLoss
 from data.scheduler import *
 from datetime import datetime
 from scripts.measure import metrics
-import scripts.dist as distpts.dist as dist
+import scripts.dist as dist
 from scripts.utils import Tee, checkpoint, compute_model_complexity
 from torch.utils.tensorboard import SummaryWriter
 
@@ -240,8 +240,8 @@ def train(rank, args):
                 """Evaluate model and print metrics"""
                 output_list, gt_list = eval(model, testing_data_loader, alpha_predict=alpha_predict, base_alpha_s=base_alpha_s, base_alpha_i=base_alpha_i, alpha_rgb=alpha_rgb)
                 avg_psnr, avg_ssim, avg_lpips = metrics(output_list, gt_list, use_GT_mean=use_GT_mean)
-                print("===> Evaluation (use_GT_mean={}, alpha_predict={}, base_alpha_s={}, base_alpha_i={}) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(
-                    use_GT_mean, alpha_predict, base_alpha_s, base_alpha_i, avg_psnr, avg_ssim, avg_lpips))
+                print("===> Evaluation (use_GT_mean={}, alpha_predict={}, base_alpha_s={}, base_alpha_i={}, alpha_rgb={}) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(
+                    use_GT_mean, alpha_predict, base_alpha_s, base_alpha_i, alpha_rgb, avg_psnr, avg_ssim, avg_lpips))
                 return avg_psnr, avg_ssim, avg_lpips
     
             evaluate_and_print(True, base_alpha_s=1.0, base_alpha_i=1.0, alpha_rgb=0.8, use_GT_mean=use_GT_mean)
