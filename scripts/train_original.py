@@ -14,7 +14,7 @@ from loss.losses import CIDNetCombinedLoss
 from data.scheduler import *
 from datetime import datetime
 from scripts.measure import metrics
-import scripts.dist as distpts.dist as dist
+import scripts.dist as dist
 from scripts.utils import Tee, checkpoint, compute_model_complexity
 from torch.utils.tensorboard import SummaryWriter
 

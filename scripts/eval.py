@@ -4,7 +4,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data.data import *
 from loss.losses import *
 from scripts.measure import metrics
-import scripts.dist as distpts.dist as dist
+import scripts.dist as dist
 from scripts.options import option, load_datasets
 import safetensors.torch as sf
 from huggingface_hub import hf_hub_download
@@ -80,11 +80,24 @@ if __name__ == '__main__':
     parser.set_defaults(dataset='lolv2_real')
     parser.add_argument('--weight_path', type=str, default='weights/lolv2_real/20251204_201043/epoch_1.pth', help='Path to the pre-trained model weights')
     parser.add_argument('--output_dir', type=str, default='results/ssm_eval_results', help='Directory to save comparison images')
-    parser.add_argument('--cidnet_model', type=str, default="Fediory/HVI-CIDNet-LOLv2-syn-wperc",
+        # Available CIDNet models from Hugging Face:
+        # Fediory/HVI-CIDNet
+        # Fediory/HVI-CIDNet-LOLv1-wperc
+        # Fediory/HVI-CIDNet-LOLv1-woperc
+        # Fediory/HVI-CIDNet-LOLv2-real-bestPSNR
+        # Fediory/HVI-CIDNet-LOLv2-real-bestSSIM
+        # Fediory/HVI-CIDNet-LOLv2-syn-wperc
+        # Fediory/HVI-CIDNet-LOLv2-syn-woperc
+        # Fediory/HVI-CIDNet-Generalization
+        # Fediory/HVI-CIDNet-LOL-Blur
+        # Fediory/HVI-CIDNet-SICE
+        # Fediory/HVI-CIDNet-Sony-Total-Dark
+        # Fediory/HVI-CIDNet-FiveK
+    parser.add_argument('--cidnet_model', type=str, default="Fediory/HVI-CIDNet-LOLv2-real-bestPSNR",
                         help='CIDNet model name or path from Hugging Face')
     
     parser.add_argument('--base_alpha_s', type=float, default=1.0, help='Base alpha_s parameter for CIDNet')
-    parser.add_argument('--base_alpha_i', type=float, default=1.3, help='Base alpha_i parameter for CIDNet')
+    parser.add_argument('--base_alpha_i', type=float, default=0.8, help='Base alpha_i parameter for CIDNet')
     parser.add_argument('--alpha_rgb', type=float, default=1.0, help='RGB scaling factor')
     parser.add_argument('--use_GT_mean', type=bool, default=False, help='Use the mean of GT to rectify the output of the model')
     args = parser.parse_args()
