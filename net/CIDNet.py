@@ -1,11 +1,12 @@
 import torch
 import torch.nn as nn
-from net.HVI_transform_SSM import RGB_HVI
+from net.BaseCIDNet import BaseCIDNet
+from net.HVI_transform import RGB_HVI
 from net.transformer_utils import *
 from net.LCA import *
 from huggingface_hub import PyTorchModelHubMixin
 
-class CIDNet(nn.Module, PyTorchModelHubMixin):
+class CIDNet(BaseCIDNet, PyTorchModelHubMixin):
     def __init__(self, 
                  channels=[36, 36, 72, 144],
                  heads=[1, 2, 4, 8],
@@ -73,14 +74,9 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
         self.base_alpha_i = 1.0
         self.alpha_rgb = 1.0
     
-    def set_base_alpha(self, base_alpha_s=1.0, base_alpha_i=1.0, alpha_rgb=1.0):
-        """Set base alpha values for S, I channels and RGB scaling"""
-        self.base_alpha_s = base_alpha_s
-        self.base_alpha_i = base_alpha_i
-        self.alpha_rgb = alpha_rgb
-
-    
-    def forward(self, x):
+    def RGB_to_HVI(self,x):
+        hvi = self.trans.RGB_to_HVI(x)
+        return hvi
         dtypes = x.dtype
         hvi = self.trans.RGB_to_HVI(x)
         i = hvi[:,2,:,:].unsqueeze(1).to(dtypes)
@@ -132,8 +128,3 @@ class CIDNet(nn.Module, PyTorchModelHubMixin):
         output_rgb = self.trans.HVI_to_RGB(output_hvi, self.base_alpha_s, self.base_alpha_i, self.alpha_rgb)
 
         return output_rgb
-
-
-    def RGB_to_HVI(self,x):
-        hvi = self.trans.RGB_to_HVI(x)
-        return hvi

@@ -55,12 +55,15 @@ def train_one_epoch(model, optimizer, training_data_loader, args, loss_f):
         # use random gamma function (enhancement curve) to improve generalization
         if args.use_random_gamma:
             gamma = random.randint(args.start_gamma, args.end_gamma) / 100.0
-            output_rgb, output_rgb_base = model(im1 ** gamma)  
+            output = model(im1 ** gamma)  
         else:
-            output_rgb, output_rgb_base = model(im1)
+            output = model(im1)
         
-        # 통합 loss 계산 (RGB/HVI + Intermediate Supervision 모두 포함)
-        loss = loss_f(output_rgb, output_rgb_base, im2)
+        if not isinstance(output, tuple):
+            output = (output,)
+
+        loss = loss_f(*output, im2)
+
         
         if args.grad_clip:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 0.01, norm_type=2)
@@ -73,7 +76,7 @@ def train_one_epoch(model, optimizer, training_data_loader, args, loss_f):
         total_batches += 1
         
     # 에폭 완료 후 샘플 이미지 저장 (마지막 배치의 결과)
-    output_img = transforms.ToPILImage()((output_rgb)[0].squeeze(0))
+    output_img = transforms.ToPILImage()((output[0])[0].squeeze(0))
     gt_img = transforms.ToPILImage()((im2)[0].squeeze(0))
     if not os.path.exists(args.val_folder+'training'):          
         os.makedirs(args.val_folder+'training') 
@@ -154,10 +157,14 @@ def init_loss(args, trans):
         use_gt_mean_loss=args.use_gt_mean_loss
     ).to(device)
     
-    loss_fn = CIDNetWithIntermediateLoss(
-        base_loss_fn=base_loss,
-        intermediate_weight=args.intermediate_weight
-    ).to(device)
+    if args.model_file.endswith('CIDNet_SSM.py'):
+        # CIDNet_SSM인 경우 Intermediate Supervision loss 포함
+        loss_fn = CIDNetWithIntermediateLoss(
+            base_loss_fn=base_loss,
+            intermediate_weight=args.intermediate_weight
+        ).to(device)
+    else:
+        loss_fn = base_loss
     
     return loss_fn
 
@@ -235,7 +242,7 @@ def train(rank, args):
         
 
         
-        def eval_and_log(use_GT_mean=False):
+        def eval_and_log(base_alpha_s=1.0, base_alpha_i=1.0, alpha_rgb=1.0):
             def evaluate_and_print(alpha_predict, base_alpha_s, base_alpha_i=1.0, alpha_rgb=1.0, use_GT_mean=False):
                 """Evaluate model and print metrics"""
                 output_list, gt_list = eval(model, testing_data_loader, alpha_predict=alpha_predict, base_alpha_s=base_alpha_s, base_alpha_i=base_alpha_i, alpha_rgb=alpha_rgb)
@@ -244,8 +251,8 @@ def train(rank, args):
                     use_GT_mean, alpha_predict, base_alpha_s, base_alpha_i, alpha_rgb, avg_psnr, avg_ssim, avg_lpips))
                 return avg_psnr, avg_ssim, avg_lpips
     
-            evaluate_and_print(True, base_alpha_s=1.0, base_alpha_i=1.0, alpha_rgb=0.8, use_GT_mean=use_GT_mean)
-            avg_psnr, avg_ssim, avg_lpips = evaluate_and_print(True, base_alpha_s=1.0, base_alpha_i=1.0, alpha_rgb=1.0, use_GT_mean=use_GT_mean)
+            evaluate_and_print(True, base_alpha_s=base_alpha_s, base_alpha_i=base_alpha_i, alpha_rgb=alpha_rgb, use_GT_mean=True)
+            avg_psnr, avg_ssim, avg_lpips = evaluate_and_print(True, base_alpha_s=base_alpha_s, base_alpha_i=base_alpha_i, alpha_rgb=alpha_rgb, use_GT_mean=False)
             return avg_psnr, avg_ssim, avg_lpips
 
 

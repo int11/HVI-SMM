@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-from net.HVI_transform_SSM import RGB_HVI
+from net.BaseCIDNetWithSMM import BaseCIDNetWithSMM, SMM
+from net.HVI_transform import RGB_HVI
 from net.transformer_utils import *
 from net.LCA import *
 from huggingface_hub import PyTorchModelHubMixin
@@ -8,37 +9,7 @@ from huggingface_hub import hf_hub_download
 import safetensors.torch as sf
 
 
-class SSM(nn.Module):
-    # Spatial Modulation Module(SSM)
-    def __init__(self, in_channels, gamma=0.5):
-        super(SSM, self).__init__()
-        self.predictor = nn.Sequential(
-            nn.ReplicationPad2d(1),
-            nn.Conv2d(in_channels, in_channels // 2, 3, stride=1, padding=0, bias=False),
-            nn.GroupNorm(1, in_channels // 2),
-            nn.SiLU(inplace=True),
-            nn.ReplicationPad2d(1),
-            nn.Conv2d(in_channels // 2, 2, 3, stride=1, padding=0, bias=False),  # output 2 channels for alpha_s, alpha_i
-            nn.Tanh()  # Tanh 출력 범위: [-1, 1]
-        )
-        self.gamma = gamma  # Tanh 스케일링 파라미터 (예: 0.5이면 범위 [0.5, 1.5])
-
-    def forward(self, x, base_alpha_s=1.0, base_alpha_i=1.0):
-        alpha_maps = self.predictor(x)  # Tanh 출력: [-1, 1]
-
-        # [새로운 방식] Tanh(x) * gamma + 1
-        # gamma = 0.5이면 범위: [-0.5 + 1, 0.5 + 1] = [0.5, 1.5]
-        # CIDNet이 태업하지 못하고 최소한 원본에 근접한 출력을 내야 함
-        # SSM은 미세 조정만 가능
-        scale_factor = alpha_maps * self.gamma + 1.0
-
-        # 예측된 스케일 팩터를 각 기준 알파 값에 곱해줍니다.
-        alpha_s = base_alpha_s * scale_factor[:, 0, :, :]
-        alpha_i = base_alpha_i * scale_factor[:, 1, :, :]
-        return alpha_s, alpha_i  # alpha_s: (batch, 1, h, w), alpha_i: (batch, 1, h, w)
-
-
-class CIDNet_SSM(nn.Module, PyTorchModelHubMixin):
+class CIDNet_SMM(BaseCIDNetWithSMM, PyTorchModelHubMixin):
     def __init__(self, 
                  channels=[36, 36, 72, 144],
                  heads=[1, 2, 4, 8],
@@ -47,7 +18,7 @@ class CIDNet_SSM(nn.Module, PyTorchModelHubMixin):
                  sam_model_path="Gourieff/ReActor/models/sams/sam_vit_b_01ec64.pth",
                  gamma=0.5
         ):
-        super(CIDNet_SSM, self).__init__()
+        super(CIDNet_SMM, self).__init__()
 
         [ch1, ch2, ch3, ch4] = channels
         [head1, head2, head3, head4] = heads
@@ -102,47 +73,14 @@ class CIDNet_SSM(nn.Module, PyTorchModelHubMixin):
         
         self.trans = RGB_HVI()
         
-        # if cidnet_model_path != None:
-        #     print(f"Loading CIDNet model from: {cidnet_model_path}")
-
-        #     # Hugging Face Hub에서 CIDNet model 다운로드
-        #     model_file = hf_hub_download(
-        #         repo_id=cidnet_model_path,
-        #         filename="model.safetensors",
-        #         repo_type="model"
-        #     )
-        #     print(f"CIDNet model downloaded from: {model_file}")
-            
-        #     # 모델 초기화 및 가중치 로드
-        #     state_dict = sf.load_file(model_file)
-        #     self.load_state_dict(state_dict, strict=False)
-
-        # if sam_model_path != None:
-        #     self.sam = load_sam_model(sam_model_path)
-
-        # Freeze all loaded parameters (before adding new layers)
-        # for param in self.parameters():
-        #     param.requires_grad = False
-        
         # Alpha configuration
         self.alpha_predict = True
         self.base_alpha_s = 1.0
         self.base_alpha_i = 1.0
         self.alpha_rgb = 1.0
 
-        self.alpha_predictor = SSM(in_channels=ch2*2, gamma=gamma)
+        self.alpha_predictor = SMM(in_channels=ch2*2, gamma=gamma)
     
-    def set_alpha_predict(self, alpha_predict):
-        """Set whether to predict alpha values"""
-        self.alpha_predict = alpha_predict
-    
-    def set_base_alpha(self, base_alpha_s=1.0, base_alpha_i=1.0, alpha_rgb=1.0):
-        """Set base alpha values for S, I channels and RGB scaling"""
-        self.base_alpha_s = base_alpha_s
-        self.base_alpha_i = base_alpha_i
-        self.alpha_rgb = alpha_rgb
-
-
     def forward(self, x):
         dtypes = x.dtype
         hvi = self.trans.RGB_to_HVI(x)
@@ -208,13 +146,9 @@ class CIDNet_SSM(nn.Module, PyTorchModelHubMixin):
         # CIDNet_SSM은 항상 (output_rgb, output_rgb_base) 튜플 반환
         return output_rgb, output_rgb_base
     
-    def RGB_to_HVI(self,x):
-        hvi = self.trans.RGB_to_HVI(x)
-        return hvi
-    
 
 if __name__ == "__main__":
-    model = CIDNet_SSM()
+    model = CIDNet_SMM()
     model.eval()
     dummy_input = torch.randn(2, 3, 400, 400)  # Example input tensor
     with torch.no_grad():

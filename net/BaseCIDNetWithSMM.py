@@ -1,0 +1,38 @@
+import torch.nn as nn
+from .BaseCIDNet import BaseCIDNet
+from huggingface_hub import PyTorchModelHubMixin
+
+class SMM(nn.Module):
+    # Spatial Modulation Module(SMM)
+    def __init__(self, in_channels, gamma=0.5):
+        super(SMM, self).__init__()
+        self.predictor = nn.Sequential(
+            nn.ReplicationPad2d(1),
+            nn.Conv2d(in_channels, in_channels // 2, 3, stride=1, padding=0, bias=False),
+            nn.GroupNorm(1, in_channels // 2),
+            nn.SiLU(inplace=True),
+            nn.ReplicationPad2d(1),
+            nn.Conv2d(in_channels // 2, 2, 3, stride=1, padding=0, bias=False),  # output 2 channels for alpha_s, alpha_i
+            nn.Tanh()  # Tanh 출력 범위: [-1, 1]
+        )
+        self.gamma = gamma  # Tanh 스케일링 파라미터 (예: 0.5이면 범위 [0.5, 1.5])
+
+    def forward(self, x, base_alpha_s=1.0, base_alpha_i=1.0):
+        alpha_maps = self.predictor(x)  # Tanh 출력: [-1, 1]
+
+        # [새로운 방식] Tanh(x) * gamma + 1
+        # gamma = 0.5이면 범위: [-0.5 + 1, 0.5 + 1] = [0.5, 1.5]
+        # CIDNet이 태업하지 못하고 최소한 원본에 근접한 출력을 내야 함
+        # SSM은 미세 조정만 가능
+        scale_factor = alpha_maps * self.gamma + 1.0
+
+        # 예측된 스케일 팩터를 각 기준 알파 값에 곱해줍니다.
+        alpha_s = base_alpha_s * scale_factor[:, 0, :, :]
+        alpha_i = base_alpha_i * scale_factor[:, 1, :, :]
+        return alpha_s, alpha_i  # alpha_s: (batch, 1, h, w), alpha_i: (batch, 1, h, w)
+
+
+class BaseCIDNetWithSMM(BaseCIDNet, PyTorchModelHubMixin):
+    def set_alpha_predict(self, alpha_predict):
+        """Set whether to predict alpha values"""
+        self.alpha_predict = alpha_predict

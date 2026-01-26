@@ -31,8 +31,8 @@ def option():
     # Training settings
     parser = argparse.ArgumentParser(description='CIDNet')
     parser.add_argument('--batchSize', type=int, default=1, help='training batch size')
-    parser.add_argument('--cropSize', type=int, default=384, help='image crop size (patch size)')
-    parser.add_argument('--nEpochs', type=int, default=500, help='number of epochs to train for end')
+    parser.add_argument('--cropSize', type=int, default=400, help='image crop size (patch size)')
+    parser.add_argument('--nEpochs', type=int, default=1500, help='number of epochs to train for end')
     parser.add_argument('--start_epoch', type=int, default=0, help='number of epochs to start, >0 is retrained a pre-trained pth')
     parser.add_argument('--snapshots', type=int, default=10, help='Snapshots for save checkpoints pth')
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning Rate')
@@ -43,7 +43,7 @@ def option():
     parser.add_argument('--seed', type=int, default=1, help='random seed to use. Default=123')
 
     # choose a scheduler
-    parser.add_argument('--model_file', type=str, default='net/CIDNet_SSM.py', help='Path to model file (e.g., net/CIDNet_fix.py)')
+    parser.add_argument('--model_file', type=str, default='net/CIDNet_fix.py', help='Path to model file (e.g., net/CIDNet_fix.py)')
     parser.add_argument('--cos_restart_cyclic', type=str_to_bool, default=False)
     parser.add_argument('--cos_restart', type=str_to_bool, default=True)
 
