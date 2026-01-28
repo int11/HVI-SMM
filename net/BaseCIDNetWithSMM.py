@@ -32,7 +32,7 @@ class SMM(nn.Module):
         return alpha_s, alpha_i  # alpha_s: (batch, 1, h, w), alpha_i: (batch, 1, h, w)
 
 
-class BaseCIDNetWithSMM(BaseCIDNet, PyTorchModelHubMixin):
+class BaseCIDNet_SMM(BaseCIDNet, PyTorchModelHubMixin):
     def set_alpha_predict(self, alpha_predict):
         """Set whether to predict alpha values"""
         self.alpha_predict = alpha_predict

@@ -17,6 +17,7 @@ from scripts.measure import metrics
 import scripts.dist as dist
 from scripts.utils import Tee, checkpoint, compute_model_complexity
 from torch.utils.tensorboard import SummaryWriter
+from net.BaseCIDNetWithSMM import BaseCIDNet_SMM
 
 
 def init_seed(seed, deterministic=False, benchmark=True):
@@ -133,13 +134,14 @@ def make_scheduler(optimizer, args):
 
     return scheduler
 
-def init_loss(args, trans):
+def init_loss(args, trans, model):
     """
     Loss 함수 초기화
     
     Args:
         args: 학습 설정
         trans: RGB_to_HVI, HVI_to_RGB 변환 객체
+        model: 모델 인스턴스
     
     Returns:
         loss_fn
@@ -157,7 +159,7 @@ def init_loss(args, trans):
         use_gt_mean_loss=args.use_gt_mean_loss
     ).to(device)
     
-    if args.model_file.endswith('CIDNet_SSM.py'):
+    if isinstance(model, BaseCIDNet_SMM):
         # CIDNet_SSM인 경우 Intermediate Supervision loss 포함
         loss_fn = CIDNetWithIntermediateLoss(
             base_loss_fn=base_loss,
@@ -211,7 +213,7 @@ def train(rank, args):
             print(f"Model FLOPs: {flops}, Params: {params}")
 
         # Get trans object for loss calculation
-        loss_fn = init_loss(args, model.trans)
+        loss_fn = init_loss(args, model.trans, model)
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
         
         # Load checkpoint if start_epoch > 0

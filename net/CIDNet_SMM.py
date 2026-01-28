@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from net.BaseCIDNetWithSMM import BaseCIDNetWithSMM, SMM
+from net.BaseCIDNetWithSMM import BaseCIDNet_SMM, SMM
 from net.HVI_transform import RGB_HVI
 from net.transformer_utils import *
 from net.LCA import *
@@ -9,7 +9,7 @@ from huggingface_hub import hf_hub_download
 import safetensors.torch as sf
 
 
-class CIDNet_SMM(BaseCIDNetWithSMM, PyTorchModelHubMixin):
+class CIDNet_SMM(BaseCIDNet_SMM, PyTorchModelHubMixin):
     def __init__(self, 
                  channels=[36, 36, 72, 144],
                  heads=[1, 2, 4, 8],
