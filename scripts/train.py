@@ -278,8 +278,9 @@ def train(rank, args):
             if epoch % args.snapshots == 0 and dist.is_main_process():
                 checkpoint(epoch, model, optimizer, save_dir)
 
-                eval_and_log(False)
-                avg_psnr, avg_ssim, avg_lpips = eval_and_log(True)
+                eval_and_log(1.3, 1.0, 1.0)
+                eval_and_log(1.0, 1.0, 0.8)
+                avg_psnr, avg_ssim, avg_lpips = eval_and_log(1.0, 1.0, 1.0)
                 
                 
                 # Log evaluation metrics to TensorBoard
