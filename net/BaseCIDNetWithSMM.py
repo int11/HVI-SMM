@@ -17,7 +17,16 @@ class SMM(nn.Module):
         )
         self.gamma = gamma  # Tanh 스케일링 파라미터 (예: 0.5이면 범위 [0.5, 1.5])
 
-    def forward(self, x, base_alpha_s=1.0, base_alpha_i=1.0):
+    def forward(self, x):
+        """
+        Predict scale_factor from input features.
+        
+        Args:
+            x: Input features
+            
+        Returns:
+            scale_factor: (batch, 2, h, w) - scale factors for S and I channels
+        """
         alpha_maps = self.predictor(x)  # Tanh 출력: [-1, 1]
 
         # [새로운 방식] Tanh(x) * gamma + 1
@@ -25,14 +34,22 @@ class SMM(nn.Module):
         # CIDNet이 태업하지 못하고 최소한 원본에 근접한 출력을 내야 함
         # SSM은 미세 조정만 가능
         scale_factor = alpha_maps * self.gamma + 1.0
-
-        # 예측된 스케일 팩터를 각 기준 알파 값에 곱해줍니다.
-        alpha_s = base_alpha_s * scale_factor[:, 0, :, :]
-        alpha_i = base_alpha_i * scale_factor[:, 1, :, :]
-        return alpha_s, alpha_i  # alpha_s: (batch, 1, h, w), alpha_i: (batch, 1, h, w)
+        return scale_factor
 
 
 class BaseCIDNet_SMM(BaseCIDNet, PyTorchModelHubMixin):
     def set_alpha_predict(self, alpha_predict):
         """Set whether to predict alpha values"""
         self.alpha_predict = alpha_predict
+    
+    def forward_features(self, x):
+        """
+        Extract intermediate features without applying final alpha scaling.
+        Returns features needed for multiple alpha combinations.
+        
+        Returns:
+            output_hvi: HVI representation after encoder-decoder
+            scale_factor: Predicted scale factors from SMM (base=1.0)
+        """
+        raise NotImplementedError("Subclass must implement forward_features()")
+        return output_rgb

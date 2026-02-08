@@ -244,18 +244,37 @@ def train(rank, args):
         
 
         
-        def eval_and_log(base_alpha_s=1.0, base_alpha_i=1.0, alpha_rgb=1.0):
-            def evaluate_and_print(alpha_predict, base_alpha_s, base_alpha_i=1.0, alpha_rgb=1.0, use_GT_mean=False):
-                """Evaluate model and print metrics"""
-                output_list, gt_list = eval(model, testing_data_loader, alpha_predict=alpha_predict, base_alpha_s=base_alpha_s, base_alpha_i=base_alpha_i, alpha_rgb=alpha_rgb)
-                avg_psnr, avg_ssim, avg_lpips = metrics(output_list, gt_list, use_GT_mean=use_GT_mean)
-                print("===> Evaluation (use_GT_mean={}, alpha_predict={}, base_alpha_s={}, base_alpha_i={}, alpha_rgb={}) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(
-                    use_GT_mean, alpha_predict, base_alpha_s, base_alpha_i, alpha_rgb, avg_psnr, avg_ssim, avg_lpips))
-                return avg_psnr, avg_ssim, avg_lpips
-    
-            evaluate_and_print(True, base_alpha_s=base_alpha_s, base_alpha_i=base_alpha_i, alpha_rgb=alpha_rgb, use_GT_mean=True)
-            avg_psnr, avg_ssim, avg_lpips = evaluate_and_print(True, base_alpha_s=base_alpha_s, base_alpha_i=base_alpha_i, alpha_rgb=alpha_rgb, use_GT_mean=False)
-            return avg_psnr, avg_ssim, avg_lpips
+        def eval_and_log_batched(alpha_combinations):
+            """
+            Evaluate all alpha combinations in a single batched forward pass.
+            
+            Args:
+                alpha_combinations: List of (base_alpha_s, base_alpha_i, alpha_rgb) tuples
+            
+            Returns:
+                metrics for the last alpha combination (for backward compatibility)
+            """
+            # Batched evaluation - computes all alpha combinations efficiently
+            results = eval(model, testing_data_loader, alpha_combinations)
+            
+            # Process each alpha combination
+            last_metrics = None
+            for (base_alpha_s, base_alpha_i, alpha_rgb) in alpha_combinations:
+                output_list, gt_list = results[(base_alpha_s, base_alpha_i, alpha_rgb)]
+                
+                # (1) Compute metrics with use_GT_mean=True
+                avg_psnr_gt, avg_ssim_gt, avg_lpips_gt = metrics(output_list, gt_list, use_GT_mean=True)
+                print("===> Evaluation (use_GT_mean=True, alpha_predict=True, base_alpha_s={}, base_alpha_i={}, alpha_rgb={}) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(
+                    base_alpha_s, base_alpha_i, alpha_rgb, avg_psnr_gt, avg_ssim_gt, avg_lpips_gt))
+                
+                # (2) Compute metrics with use_GT_mean=False
+                avg_psnr, avg_ssim, avg_lpips = metrics(output_list, gt_list, use_GT_mean=False)
+                print("===> Evaluation (use_GT_mean=False, alpha_predict=True, base_alpha_s={}, base_alpha_i={}, alpha_rgb={}) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(
+                    base_alpha_s, base_alpha_i, alpha_rgb, avg_psnr, avg_ssim, avg_lpips))
+                
+                last_metrics = (avg_psnr, avg_ssim, avg_lpips)
+            
+            return last_metrics
 
 
         for epoch in range(start_epoch+1, args.nEpochs + start_epoch + 1):
@@ -278,9 +297,9 @@ def train(rank, args):
             if epoch % args.snapshots == 0 and dist.is_main_process():
                 checkpoint(epoch, model, optimizer, save_dir)
 
-                eval_and_log(1.3, 1.0, 1.0)
-                eval_and_log(1.0, 1.0, 0.8)
-                avg_psnr, avg_ssim, avg_lpips = eval_and_log(1.0, 1.0, 1.0)
+                # Evaluate all alpha combinations in a single batched pass
+                alpha_combinations = [(1.3, 1.0, 1.0), (1.0, 1.0, 0.8), (1.0, 1.0, 1.0)]
+                avg_psnr, avg_ssim, avg_lpips = eval_and_log_batched(alpha_combinations)
                 
                 
                 # Log evaluation metrics to TensorBoard

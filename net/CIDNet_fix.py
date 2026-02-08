@@ -73,8 +73,12 @@ class CIDNet_fix(BaseCIDNet, PyTorchModelHubMixin):
         self.base_alpha_s = 1.0
         self.base_alpha_i = 1.0
         self.alpha_rgb = 1.0
-        
-    def forward(self, x):
+    
+    def forward_features(self, x):
+        """
+        Extract features without final alpha scaling.
+        Returns output_hvi and scale_factor (None for base CIDNet).
+        """
         dtypes = x.dtype
         hvi = self.trans.RGB_to_HVI(x)
         i = hvi[:,2,:,:].unsqueeze(1).to(dtypes)
@@ -122,6 +126,20 @@ class CIDNet_fix(BaseCIDNet, PyTorchModelHubMixin):
         hv_0 = self.HVD_block0(hv_1)
         
         output_hvi = torch.cat([hv_0, i_dec0], dim=1) + hvi
-        output_rgb = self.trans.HVI_to_RGB(output_hvi, self.base_alpha_s, self.base_alpha_i, self.alpha_rgb)
-
+        
+        # Base CIDNet: no spatial modulation, scale_factor is None
+        scale_factor = None
+        
+        return output_hvi, scale_factor
+        
+    def forward(self, x):
+        """
+        Forward pass using forward_features() and apply_alpha_scaling().
+        This avoids code duplication and enables efficient multi-alpha evaluation.
+        """
+        output_hvi, scale_factor = self.forward_features(x)
+        output_rgb = self.apply_alpha_scaling(
+            output_hvi, scale_factor,
+            self.base_alpha_s, self.base_alpha_i, self.alpha_rgb
+        )
         return output_rgb

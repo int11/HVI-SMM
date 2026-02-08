@@ -81,7 +81,12 @@ class CIDNet_SMM(BaseCIDNet_SMM, PyTorchModelHubMixin):
 
         self.alpha_predictor = SMM(in_channels=ch2*2, gamma=gamma)
     
-    def forward(self, x):
+    def forward_features(self, x):
+        """
+        Extract features without final alpha scaling.
+        This method computes output_hvi and scale_factor which can be reused
+        for multiple alpha combinations without redundant forward passes.
+        """
         dtypes = x.dtype
         hvi = self.trans.RGB_to_HVI(x)
         i = hvi[:,2,:,:].unsqueeze(1).to(dtypes)
@@ -132,14 +137,37 @@ class CIDNet_SMM(BaseCIDNet_SMM, PyTorchModelHubMixin):
         hv_0 = self.HVD_block0(hv_1)
         
         output_hvi = torch.cat([hv_0, i_dec0], dim=1) + hvi
-
-        # I_base: SMM 없이 기본 alpha 값만으로 변환한 결과 (Intermediate Supervision용)
-        output_rgb_base = self.trans.HVI_to_RGB(output_hvi, self.base_alpha_s, self.base_alpha_i, self.alpha_rgb)
-
+        
+        # SMM scale_factor 계산
         if self.alpha_predict:
-            alpha_input = torch.cat([i_dec1, hv_1], dim=1)  # (batch, ch1*2, h, w)
-            alpha_s, alpha_i = self.alpha_predictor(alpha_input, self.base_alpha_s, self.base_alpha_i)
-            output_rgb = self.trans.HVI_to_RGB(output_hvi, alpha_s, alpha_i, self.alpha_rgb)
+            alpha_input = torch.cat([i_dec1, hv_1], dim=1)
+            scale_factor = self.alpha_predictor(alpha_input)
+        else:
+            scale_factor = torch.ones(x.shape[0], 2, x.shape[2], x.shape[3], 
+                                       device=x.device, dtype=x.dtype)
+        
+        return output_hvi, scale_factor
+    
+    def forward(self, x):
+        """
+        Forward pass with optional alpha prediction.
+        Refactored to use forward_features() to avoid code duplication.
+        """
+        # Extract features once
+        output_hvi, scale_factor = self.forward_features(x)
+        
+        # Base output (intermediate supervision용)
+        output_rgb_base = self.apply_alpha_scaling(
+            output_hvi, scale_factor,
+            self.base_alpha_s, self.base_alpha_i, self.alpha_rgb
+        )
+        
+        # Final output
+        if self.alpha_predict:
+            output_rgb = self.apply_alpha_scaling(
+                output_hvi, scale_factor,
+                self.base_alpha_s, self.base_alpha_i, self.alpha_rgb
+            )
         else:
             output_rgb = output_rgb_base
 
