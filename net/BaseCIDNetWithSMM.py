@@ -38,18 +38,4 @@ class SMM(nn.Module):
 
 
 class BaseCIDNet_SMM(BaseCIDNet, PyTorchModelHubMixin):
-    def set_alpha_predict(self, alpha_predict):
-        """Set whether to predict alpha values"""
-        self.alpha_predict = alpha_predict
-    
-    def forward_features(self, x):
-        """
-        Extract intermediate features without applying final alpha scaling.
-        Returns features needed for multiple alpha combinations.
-        
-        Returns:
-            output_hvi: HVI representation after encoder-decoder
-            scale_factor: Predicted scale factors from SMM (base=1.0)
-        """
-        raise NotImplementedError("Subclass must implement forward_features()")
-        return output_rgb
+    pass

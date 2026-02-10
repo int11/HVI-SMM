@@ -72,13 +72,6 @@ class CIDNet_SMM(BaseCIDNet_SMM, PyTorchModelHubMixin):
         self.I_LCA6 = I_LCA(ch2, head2)
         
         self.trans = RGB_HVI()
-        
-        # Alpha configuration
-        self.alpha_predict = True
-        self.base_alpha_s = 1.0
-        self.base_alpha_i = 1.0
-        self.alpha_rgb = 1.0
-
         self.alpha_predictor = SMM(in_channels=ch2*2, gamma=gamma)
     
     def forward_features(self, x):
@@ -138,14 +131,10 @@ class CIDNet_SMM(BaseCIDNet_SMM, PyTorchModelHubMixin):
         
         output_hvi = torch.cat([hv_0, i_dec0], dim=1) + hvi
         
-        # SMM scale_factor 계산
-        if self.alpha_predict:
-            alpha_input = torch.cat([i_dec1, hv_1], dim=1)
-            scale_factor = self.alpha_predictor(alpha_input)
-        else:
-            scale_factor = torch.ones(x.shape[0], 2, x.shape[2], x.shape[3], 
-                                       device=x.device, dtype=x.dtype)
-        
+
+        alpha_input = torch.cat([i_dec1, hv_1], dim=1)
+        scale_factor = self.alpha_predictor(alpha_input)
+
         return output_hvi, scale_factor
     
     def forward(self, x):
@@ -156,22 +145,18 @@ class CIDNet_SMM(BaseCIDNet_SMM, PyTorchModelHubMixin):
         # Extract features once
         output_hvi, scale_factor = self.forward_features(x)
         
-        # Base output (intermediate supervision용)
+        # Base output (intermediate supervision)
         output_rgb_base = self.apply_alpha_scaling(
-            output_hvi, scale_factor,
+            output_hvi, None,
             self.base_alpha_s, self.base_alpha_i, self.alpha_rgb
         )
         
-        # Final output
-        if self.alpha_predict:
-            output_rgb = self.apply_alpha_scaling(
-                output_hvi, scale_factor,
-                self.base_alpha_s, self.base_alpha_i, self.alpha_rgb
-            )
-        else:
-            output_rgb = output_rgb_base
+        output_rgb = self.apply_alpha_scaling(
+            output_hvi, scale_factor,
+            self.base_alpha_s, self.base_alpha_i, self.alpha_rgb
+        )
 
-        # CIDNet_SSM은 항상 (output_rgb, output_rgb_base) 튜플 반환
+        # CIDNet_SSM always return (output_rgb, output_rgb_base)
         return output_rgb, output_rgb_base
     
 

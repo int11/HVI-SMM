@@ -68,11 +68,6 @@ class CIDNet_fix(BaseCIDNet, PyTorchModelHubMixin):
         self.I_LCA6 = I_LCA(ch2, head2)
         
         self.trans = RGB_HVI()
-        
-        # Alpha configuration
-        self.base_alpha_s = 1.0
-        self.base_alpha_i = 1.0
-        self.alpha_rgb = 1.0
     
     def forward_features(self, x):
         """

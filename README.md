@@ -38,6 +38,22 @@ python scripts/train.py --dataset lolv2_syn --batchSize 4 --nEpochs 500 --model_
 - Run `scripts/eval.py` to evaluate trained models on supported datasets.
 - Metrics: PSNR, SSIM, LPIPS, and custom metrics (see `scripts/measure.py`).
 
+## Pretrained Weights
+
+Download pretrained model weights from Hugging Face Hub:
+
+- **LOL-v1**: [akyaa/HVI-SMM-LOLv1](https://huggingface.co/akyaa/HVI-SMM-LOLv1)
+- **LOL-v2 (Real)**: [akyaa/HVI-SMM-LOLv2-real](https://huggingface.co/akyaa/HVI-SMM-LOLv2-real)
+- **LOL-v2 (Synthetic)**: [akyaa/HVI-SMM-LOLv2-syn](https://huggingface.co/akyaa/HVI-SMM-LOLv2-syn)
+
+```python
+from huggingface_hub import hf_hub_download
+
+weight_path = hf_hub_download(
+    repo_id='akyaa/HVI-SMM-LOLv2-real',
+    filename='model.safetensors'
+)
+```
 
 ## Citation
 If you use HVI-SMM in your research, please cite:

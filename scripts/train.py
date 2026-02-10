@@ -63,6 +63,7 @@ def train_one_epoch(model, optimizer, training_data_loader, args, loss_f):
         if not isinstance(output, tuple):
             output = (output,)
 
+        # if cidnet_smm,  CIDNetWithIntermediateLoss(output_rgb, output_rgb_base, im2) elif cidnet CIDNetCombinedLoss(output_rgb, im2)
         loss = loss_f(*output, im2)
 
         
@@ -264,12 +265,12 @@ def train(rank, args):
                 
                 # (1) Compute metrics with use_GT_mean=True
                 avg_psnr_gt, avg_ssim_gt, avg_lpips_gt = metrics(output_list, gt_list, use_GT_mean=True)
-                print("===> Evaluation (use_GT_mean=True, alpha_predict=True, base_alpha_s={}, base_alpha_i={}, alpha_rgb={}) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(
+                print("===> Evaluation (use_GT_mean=True, base_alpha_s={}, base_alpha_i={}, alpha_rgb={}) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(
                     base_alpha_s, base_alpha_i, alpha_rgb, avg_psnr_gt, avg_ssim_gt, avg_lpips_gt))
                 
                 # (2) Compute metrics with use_GT_mean=False
                 avg_psnr, avg_ssim, avg_lpips = metrics(output_list, gt_list, use_GT_mean=False)
-                print("===> Evaluation (use_GT_mean=False, alpha_predict=True, base_alpha_s={}, base_alpha_i={}, alpha_rgb={}) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(
+                print("===> Evaluation (use_GT_mean=False, base_alpha_s={}, base_alpha_i={}, alpha_rgb={}) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(
                     base_alpha_s, base_alpha_i, alpha_rgb, avg_psnr, avg_ssim, avg_lpips))
                 
                 last_metrics = (avg_psnr, avg_ssim, avg_lpips)
