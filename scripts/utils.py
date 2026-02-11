@@ -4,7 +4,6 @@ import torch
 import torchvision.transforms as transforms
 from datetime import datetime
 import scripts.dist as dist
-from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
 from huggingface_hub import hf_hub_download
 from net.CIDNet_SMM import CIDNet_SMM
 from fvcore.nn import flop_count, FlopCountAnalysis
