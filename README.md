@@ -1,6 +1,7 @@
 # HVI-SMM: Spatially-Adaptive Correction for Low-Light Image Enhancement
 
 ![Table 1: Main Results](pic/table1.png)
+![Table 2: Main Results](pic/1.png)
 
 **HVI-SMM establishes a new Real Time SOTA model, outperforming [HVI-CIDNet(CVPR2025)](https://github.com/Fediory/HVI-CIDNet) model.**
 

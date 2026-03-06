@@ -12,6 +12,8 @@ from tqdm import tqdm
 import argparse
 import platform
 import glob
+from loss.niqe_utils import calculate_niqe
+import piq
 
 
 def ssim(prediction, target):
@@ -115,6 +117,54 @@ def metrics(im_list, label_list, use_GT_mean):
     avg_ssim = avg_ssim / n
     avg_lpips = avg_lpips / n
     return avg_psnr, avg_ssim, avg_lpips
+
+def metrics_no_ref(im_list):
+    """
+    Calculate Reference-free metrics (NIQE, BRISQUE)
+    """
+    avg_niqe = 0
+    avg_brisque = 0
+    n = 0
+    
+    for item in im_list:
+        n += 1
+        # Handle input types
+        if isinstance(item, str):
+            im_pil = Image.open(item).convert('RGB')
+        elif isinstance(item, Image.Image):
+            im_pil = item.convert('RGB')
+        else:  # numpy array
+            # Assuming item is HWC, [0, 1] or [0, 255]
+            if item.max() <= 1.0:
+                item = (item * 255).astype(np.uint8)
+            else:
+                item = item.astype(np.uint8)
+            im_pil = Image.fromarray(item)
+            
+        im_np = np.array(im_pil)
+        
+        # BRISQUE
+        from torchvision.transforms.functional import to_tensor
+        im_tensor = to_tensor(im_pil).unsqueeze(0).cuda()
+        score_brisque = piq.brisque(im_tensor, data_range=1.0).item()
+        
+        # NIQE
+        # calculate_niqe expects numpy array
+        score_niqe = calculate_niqe(im_np)
+        
+        avg_brisque += score_brisque
+        avg_niqe += score_niqe
+        
+        torch.cuda.empty_cache()
+        
+    if n == 0:
+        return 0, 0
+        
+    avg_niqe /= n
+    avg_brisque /= n
+    
+    return avg_niqe, avg_brisque
+
 
 def metrics_one(im1, im2, use_GT_mean):
     if isinstance(im1, Image.Image):

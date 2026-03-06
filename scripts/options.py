@@ -43,9 +43,8 @@ def option():
     parser.add_argument('--seed', type=int, default=1, help='random seed to use. Default=123')
 
     # choose a scheduler
+    parser.add_argument('--scheduler', type=str, default='cos_restart', choices=['cos_restart', 'cos_restart_cyclic', 'None'], help='Choose a scheduler')
     parser.add_argument('--model_file', type=str, default='net/CIDNet_fix.py', help='Path to model file (e.g., net/CIDNet_fix.py)')
-    parser.add_argument('--cos_restart_cyclic', type=str_to_bool, default=False)
-    parser.add_argument('--cos_restart', type=str_to_bool, default=True)
 
     # warmup training
     parser.add_argument('--warmup_epochs', type=int, default=3, help='warmup_epochs')

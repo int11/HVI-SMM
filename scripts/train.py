@@ -94,7 +94,10 @@ def make_scheduler(optimizer, args):
     # Calculate last_epoch for resumed training
     cosine_last_epoch = -1 if args.start_epoch == 0 else args.start_epoch - 1 - args.warmup_epochs
     
-    if args.cos_restart_cyclic:
+    if args.scheduler == 'None':
+        return None
+
+    if args.scheduler == 'cos_restart_cyclic':
         # CosineAnnealingRestartCyclicLR scheduler
         periods = [(args.nEpochs//4)-args.warmup_epochs, (args.nEpochs*3)//4] if args.start_warmup else [args.nEpochs//4, (args.nEpochs*3)//4]
         scheduler_step = CosineAnnealingRestartCyclicLR(
@@ -105,7 +108,7 @@ def make_scheduler(optimizer, args):
             last_epoch=cosine_last_epoch
         )
         
-    elif args.cos_restart:
+    elif args.scheduler == 'cos_restart':
         # CosineAnnealingRestartLR scheduler
         periods = [args.nEpochs - args.warmup_epochs] if args.start_warmup else [args.nEpochs]
         scheduler_step = CosineAnnealingRestartLR(
@@ -284,7 +287,8 @@ def train(rank, args):
                 training_data_loader.sampler.set_epoch(epoch)
                 
             avg_loss, epoch_time = train_one_epoch(model, optimizer, training_data_loader, args, loss_fn)
-            scheduler.step()
+            if scheduler is not None:
+                scheduler.step()
             
             # Log basic epoch info for all processes
             print("===> Epoch[{}] Avg Loss: {:.6f} || Learning rate: {:.6f} || Time: {:.2f}s".format(

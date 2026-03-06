@@ -1,5 +1,5 @@
 arch
-image_quality
+piq
 lpips
 matplotlib
 numpy

@@ -3,7 +3,8 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data.data import *
 from loss.losses import *
-from scripts.measure import metrics
+from loss.losses import *
+from scripts.measure import metrics, metrics_no_ref
 import scripts.dist as dist
 from scripts.options import option, load_datasets
 import safetensors.torch as sf
@@ -14,7 +15,10 @@ from net.CIDNet_fix import CIDNet_fix
 from net.BaseCIDNet import BaseCIDNet
 from net.BaseCIDNetWithSMM import BaseCIDNet_SMM
 from torchvision.transforms import ToPILImage, ToTensor
+from torchvision.transforms import ToPILImage, ToTensor
 import torch.utils.data
+from torch.utils.data import DataLoader
+from data.eval_sets import SICEDatasetFromFolderEval
 import matplotlib.pyplot as plt
 
 
@@ -32,7 +36,7 @@ def array_to_heatmap(arr, cmap='jet'):
     return Image.fromarray(rgb, mode='RGB')
 
 
-def eval(model, data, alpha_combinations):
+def eval(model, data, alpha_combinations, unpaired=False):
     """
     Unified evaluation function for both CIDNet and CIDNet_SMM models.
     Efficiently handles multiple alpha combinations by computing features once,
@@ -42,6 +46,7 @@ def eval(model, data, alpha_combinations):
         model: BaseCIDNet or BaseCIDNet_SMM model instance
         data: DataLoader for test data
         alpha_combinations: List of (base_alpha_s, base_alpha_i, alpha_rgb) tuples
+        unpaired: bool, if True, skip GT processing (default: False)
                            예: [(1.0, 1.0, 1.0)] or [(1.3, 1.0, 1.0), (1.0, 1.0, 0.8)]
         
     Returns:
@@ -66,7 +71,9 @@ def eval(model, data, alpha_combinations):
     
     for batch in data:
         input_img = batch[0].to(device)
-        gt_img = batch[1]
+        
+        if not unpaired:
+            gt_img = batch[1]
         
         # Forward pass once (heavy computation)
         with torch.no_grad():
@@ -83,15 +90,22 @@ def eval(model, data, alpha_combinations):
             # Convert to numpy and store
             output_rgb = torch.clamp(output_rgb, 0, 1)
             output_np = output_rgb.squeeze(0).cpu().numpy().transpose(1, 2, 0)
-            gt_pil = ToPILImage()(gt_img.squeeze(0).cpu())
             
+            if not unpaired:
+                gt_pil = ToPILImage()(gt_img.squeeze(0).cpu())
+                results[(base_alpha_s, base_alpha_i, alpha_rgb)][1].append(gt_pil)
+            else:
+                results[(base_alpha_s, base_alpha_i, alpha_rgb)][1].append(None)
+
             results[(base_alpha_s, base_alpha_i, alpha_rgb)][0].append(output_np)
-            results[(base_alpha_s, base_alpha_i, alpha_rgb)][1].append(gt_pil)
         
         torch.cuda.empty_cache()
     
     torch.set_grad_enabled(True)
     return results
+
+
+
 
 
 def load_cidnet_base_model(model_path, device):
@@ -118,7 +132,7 @@ def load_cidnet_base_model(model_path, device):
 if __name__ == '__main__':
     parser = option()
     parser.add_argument('--input_image', type=str, default=None, help='Path to input image')
-    parser.add_argument('--cidnet_ssm_path', type=str, default="weights/lolv2_real/v5/20260112_162957_gt_mean_loss='hvi'/epoch_570.pth", help='Path to the CIDNet SSM model weights')
+    parser.add_argument('--cidnet_ssm_path', type=str, default="weights/lolv2_syn/v5/20260122_235613_intensity_aug/epoch_500.pth", help='Path to the CIDNet SSM model weights')
     parser.add_argument('--output_dir', type=str, default='results/ssm_eval_results_lolv2realv2_2', help='Directory to save comparison images')
         # Available CIDNet models from Hugging Face:
         # Fediory/HVI-CIDNet
@@ -133,12 +147,14 @@ if __name__ == '__main__':
         # Fediory/HVI-CIDNet-SICE
         # Fediory/HVI-CIDNet-Sony-Total-Dark
         # Fediory/HVI-CIDNet-FiveK
-    parser.add_argument('--cidnet_path', type=str, default="Fediory/HVI-CIDNet-LOLv2-real-bestPSNR",
+    parser.add_argument('--cidnet_path', type=str, default="Fediory/HVI-CIDNet-Generalization",
                         help='Path to the base CIDNet model')
-    parser.add_argument('--base_alpha_s', type=float, default=1.0, help='Base alpha_s parameter for CIDNet')
+    parser.add_argument('--base_alpha_s', type=float, default=1.0, help='Base alpha_s parameter for CIDNet') 
     parser.add_argument('--base_alpha_i', type=float, default=1.0, help='Base alpha_i parameter for CIDNet')
-    parser.add_argument('--alpha_rgb', type=float, default=0.8, help='RGB scaling factor')
+    parser.add_argument('--alpha_rgb', type=float, default=1.0, help='RGB scaling factor')
     parser.add_argument('--use_GT_mean', type=bool, default=False, help='Use the mean of GT to rectify the output of the model')
+    parser.add_argument('--unpaired_dataset_dir', type=str, default='./datasets/unpaired', help='Directory path containing unpaired datasets')
+    parser.add_argument('--unpaired_dataset_names', type=str, nargs='+', default=['DICM', 'LIME', 'MEF', 'NPE'], help='List of unpaired dataset folder names to evaluate')
     args = parser.parse_args()
     
     # Create alpha_combinations from parsed arguments
@@ -191,6 +207,8 @@ if __name__ == '__main__':
         output_path = os.path.join(args.output_dir, 'single_image_output.png')
         output_img.save(output_path)
         print(f"Saved single image output to {output_path}")
+
+
         
         # Save alpha maps if available
         if alpha_outputs:
@@ -246,6 +264,86 @@ if __name__ == '__main__':
         print(f"SSIM Improvement: {avg_ssim_sam - avg_ssim_base:+.4f}")
         print(f"LPIPS Improvement: {avg_lpips_sam - avg_lpips_base:+.4f}")
         
+        # ==========================================
+        # Unpaired Dataset Evaluation
+        # ==========================================
+        print("\n" + "="*60)
+        print("Unpaired Dataset Evaluation")
+        print("="*60)
+        
+        # Define Unpaired Datasets
+        unpaired_datasets = args.unpaired_dataset_names
+        # Assuming datasets are located at ./datasets/{NAME}
+        # Adjust path if necessary based on user environment
+        dataset_root = args.unpaired_dataset_dir 
+        
+        # Track overall metrics
+        unpaired_total_imgs = 0
+        unpaired_total_niqe_ssm = 0
+        unpaired_total_brisque_ssm = 0
+        unpaired_total_niqe_base = 0
+        unpaired_total_brisque_base = 0
+        
+        for ds_name in unpaired_datasets:
+            ds_path = os.path.join(dataset_root, ds_name)
+            if not os.path.exists(ds_path):
+                print(f"Skipping {ds_name}: Path not found ({ds_path})")
+                continue
+                
+            print(f"-- Evaluating {ds_name}...")
+            
+            # Load Dataset
+            ds_set = SICEDatasetFromFolderEval(ds_path, transform=ToTensor())
+            # Use batch_size=1 for evaluation to handle different resolutions if needed
+            ds_loader = DataLoader(dataset=ds_set, num_workers=1, batch_size=1, shuffle=False)
+            
+            # Evaluate (reuse loaded models)
+            # 1. CIDNet_SSM
+            results_unpaired_ssm = eval(eval_net, ds_loader, alpha_combinations, unpaired=True)
+            outputs_ssm, _ = results_unpaired_ssm[alpha_combinations[0]]
+            
+            # 2. Base CIDNet
+            results_unpaired_base = eval(cidnet_base, ds_loader, alpha_combinations, unpaired=True)
+            outputs_base, _ = results_unpaired_base[alpha_combinations[0]]
+            
+            # Metrics
+            niqe_ssm, brisque_ssm = metrics_no_ref(outputs_ssm)
+            niqe_base, brisque_base = metrics_no_ref(outputs_base)
+            
+            print(f"  [{ds_name}] Base CIDNet -> NIQE: {niqe_base:.4f} | BRISQUE: {brisque_base:.4f}")
+            print(f"  [{ds_name}] CIDNet_SSM  -> NIQE: {niqe_ssm:.4f} | BRISQUE: {brisque_ssm:.4f}")
+            print("-" * 60)
+            
+            # Accumulate totals
+            num_imgs = len(outputs_ssm)
+            unpaired_total_imgs += num_imgs
+            unpaired_total_niqe_ssm += niqe_ssm * num_imgs
+            unpaired_total_brisque_ssm += brisque_ssm * num_imgs
+            unpaired_total_niqe_base += niqe_base * num_imgs
+            unpaired_total_brisque_base += brisque_base * num_imgs
+            
+            # Save results (Optional, save to separate folder)
+            save_ds_dir = os.path.join(args.output_dir, ds_name)
+            os.makedirs(save_ds_dir, exist_ok=True)
+            for i, (out_ssm, out_base) in enumerate(zip(outputs_ssm, outputs_base)):
+                # Save only SSM result or comparison? Saving SSM result for now
+                img_ssm = Image.fromarray((out_ssm * 255).astype(np.uint8))
+                img_ssm.save(os.path.join(save_ds_dir, f'{ds_name}_{i+1:03d}_ssm.png'))
+            
+        # Print final average for unpaired datasets
+        if unpaired_total_imgs > 0:
+            final_niqe_ssm = unpaired_total_niqe_ssm / unpaired_total_imgs
+            final_brisque_ssm = unpaired_total_brisque_ssm / unpaired_total_imgs
+            final_niqe_base = unpaired_total_niqe_base / unpaired_total_imgs
+            final_brisque_base = unpaired_total_brisque_base / unpaired_total_imgs
+            
+            print("\n" + "="*60)
+            print(f"FINAL AVERAGE: Unpaired Datasets (Total Images: {unpaired_total_imgs})")
+            print("="*60)
+            print(f"  Base CIDNet  -> NIQE: {final_niqe_base:.4f} | BRISQUE: {final_brisque_base:.4f}")
+            print(f"  CIDNet_SSM   -> NIQE: {final_niqe_ssm:.4f} | BRISQUE: {final_brisque_ssm:.4f}")
+            print("="*60)
+            
         # Save comparison images
         os.makedirs(args.output_dir, exist_ok=True)
         from PIL import Image, ImageDraw, ImageFont
