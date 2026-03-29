@@ -2,7 +2,7 @@ import os
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data.data import *
-from loss.losses import *
+from loss import *
 from scripts.measure import metrics, metrics_no_ref
 import scripts.dist as dist
 from scripts.options import option, load_datasets
@@ -189,7 +189,7 @@ if __name__ == '__main__':
     parser.add_argument('--base_alpha_s', type=float, default=1.0, help='Base alpha_s parameter for CIDNet') 
     parser.add_argument('--base_alpha_i', type=float, default=1.0, help='Base alpha_i parameter for CIDNet')
     parser.add_argument('--alpha_rgb', type=float, default=1.0, help='RGB scaling factor')
-    parser.add_argument('--use_GT_mean', type=bool, default=False, help='Use the mean of GT to rectify the output of the model')
+    parser.add_argument('--use_gt_mean', type=bool, default=False, help='Use the mean of GT to rectify the output of the model')
     parser.add_argument('--unpaired_dataset_dir', type=str, default='./datasets/unpaired', help='Directory path containing unpaired datasets')
     parser.add_argument('--unpaired_dataset_names', type=str, nargs='+', default=['DICM', 'LIME', 'MEF', 'NPE'], help='List of unpaired dataset folder names to evaluate')
     args = parser.parse_args()
@@ -254,13 +254,14 @@ if __name__ == '__main__':
         output_base_list, _ = results_base[alpha_combinations[0]]
 
         # Paired metrics
-        psnr_ssm, ssim_ssm, lpips_ssm = metrics(output_list, gt_list, use_GT_mean=args.use_GT_mean)
-        psnr_base, ssim_base, lpips_base = metrics(output_base_list, gt_list, use_GT_mean=args.use_GT_mean)
+        psnr_ssm, ssim_ssm, lpips_ssm = metrics(output_list, gt_list, use_gt_mean=args.use_gt_mean)
+        psnr_base, ssim_base, lpips_base = metrics(output_base_list, gt_list, use_gt_mean=args.use_gt_mean)
 
+        dataset_name = args.dataset.upper() if args.dataset else 'Paired'
         final_summary_data = [
-            make_row('Paired (LOLv2)', 'Base CIDNet',
+            make_row(f'Paired ({dataset_name})', 'Base CIDNet',
                      psnr=f"{psnr_base:.4f}", ssim=f"{ssim_base:.4f}", lpips=f"{lpips_base:.4f}"),
-            make_row('Paired (LOLv2)', 'CIDNet_SSM',
+            make_row(f'Paired ({dataset_name})', 'CIDNet_SSM',
                      psnr=f"{psnr_ssm:.4f}", ssim=f"{ssim_ssm:.4f}", lpips=f"{lpips_ssm:.4f}"),
         ]
 

@@ -10,35 +10,16 @@ import importlib
 from scripts.options import option, load_datasets
 from scripts.eval import eval
 from data.data import *
-from loss.losses import CIDNetCombinedLoss, CIDNetWithIntermediateLoss
+from loss.hvi_losses import CIDNetCombinedLoss, CIDNetWithIntermediateLoss
 from data.scheduler import *
 from datetime import datetime
 from scripts.measure import metrics
 import scripts.dist as dist
-from scripts.utils import Tee, checkpoint, compute_model_complexity
+from scripts.utils import Tee, checkpoint, compute_model_complexity, init_seed, build_generator_from_args, make_common_scheduler
 from torch.utils.tensorboard import SummaryWriter
 from net.BaseCIDNetWithSMM import BaseCIDNet_SMM
 
 
-def init_seed(seed, deterministic=False, benchmark=True):
-    print(f"Using seed: {seed}")
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)    
-    np.random.seed(seed)
-    random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    
-    if deterministic:
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-    else:
-        torch.backends.cudnn.deterministic = False
-        torch.backends.cudnn.benchmark = benchmark
-    return seed
-
-    
 def train_one_epoch(model, optimizer, training_data_loader, args, loss_f):
     import time
     start_time = time.time()
@@ -90,54 +71,6 @@ def train_one_epoch(model, optimizer, training_data_loader, args, loss_f):
     return avg_loss, elapsed_time
 
 
-def make_scheduler(optimizer, args):
-    # Calculate last_epoch for resumed training
-    cosine_last_epoch = -1 if args.start_epoch == 0 else args.start_epoch - 1 - args.warmup_epochs
-    
-    if args.scheduler == 'None':
-        return None
-
-    if args.scheduler == 'cos_restart_cyclic':
-        # CosineAnnealingRestartCyclicLR scheduler
-        periods = [(args.nEpochs//4)-args.warmup_epochs, (args.nEpochs*3)//4] if args.start_warmup else [args.nEpochs//4, (args.nEpochs*3)//4]
-        scheduler_step = CosineAnnealingRestartCyclicLR(
-            optimizer=optimizer, 
-            periods=periods, 
-            restart_weights=[1,1], 
-            eta_mins=[0.0002,0.0000001],
-            last_epoch=cosine_last_epoch
-        )
-        
-    elif args.scheduler == 'cos_restart':
-        # CosineAnnealingRestartLR scheduler
-        periods = [args.nEpochs - args.warmup_epochs] if args.start_warmup else [args.nEpochs]
-        scheduler_step = CosineAnnealingRestartLR(
-            optimizer=optimizer, 
-            periods=periods, 
-            restart_weights=[1], 
-            eta_min=1e-7,
-            last_epoch=cosine_last_epoch
-        )
-        
-    else:
-        raise Exception("should choose a scheduler")
-    
-    # Create main scheduler (with or without warmup)
-    if args.start_warmup:
-        scheduler = GradualWarmupScheduler(
-            optimizer, 
-            multiplier=1, 
-            total_epoch=args.warmup_epochs, 
-            after_scheduler=scheduler_step
-        )
-        # Set main scheduler last_epoch for resumed training
-        if args.start_epoch > 0:
-            scheduler.last_epoch = args.start_epoch - 1
-    else:
-        scheduler = scheduler_step
-
-    return scheduler
-
 def init_loss(args, trans, model):
     """
     Loss 함수 초기화
@@ -155,11 +88,11 @@ def init_loss(args, trans, model):
     # 기본 loss 생성
     base_loss = CIDNetCombinedLoss(
         trans=trans,
-        L1_weight=args.L1_weight,
-        D_weight=args.D_weight,
-        E_weight=args.E_weight,
-        P_weight=args.P_weight,
-        HVI_weight=args.HVI_weight,
+        l1_weight=args.l1_weight,
+        d_weight=args.d_weight,
+        e_weight=args.e_weight,
+        p_weight=args.p_weight,
+        hvi_weight=args.hvi_weight,
         use_gt_mean_loss=args.use_gt_mean_loss
     ).to(device)
     
@@ -196,24 +129,13 @@ def train(rank, args):
 
         training_data_loader, testing_data_loader = load_datasets(args)
         
-        # Build model (class name matches file name)
+        # Build model
         print('===> Building model ')
-        model_file_path = args.model_file
-        class_name = os.path.splitext(os.path.basename(model_file_path))[0]
-        module_name = 'net.' + class_name
-        module = importlib.import_module(module_name)
-        ModelClass = getattr(module, class_name)
-        params = inspect.signature(ModelClass.__init__).parameters
-        if 'gamma' in params:
-            # CIDNet_SSM uses 'gamma' for SSM scale range
-            model = ModelClass(gamma=args.ssm_scale_range)
-        else:
-            model = ModelClass()
-        model = model.to(dist.get_device())
+        model = build_generator_from_args(args).to(dist.get_device())
 
         # Compute model complexity (only on main process, and BEFORE DDP wrapping)
         if dist.is_main_process():
-            flops, params = compute_model_complexity(model, input_size=(1, 3, args.cropSize, args.cropSize))
+            flops, params = compute_model_complexity(model, input_size=(1, 3, args.crop_size, args.crop_size))
             print(f"Model FLOPs: {flops}, Params: {params}")
 
         # Get trans object for loss calculation
@@ -232,7 +154,7 @@ def train(rank, args):
 
         
         # Create scheduler after loading optimizer state
-        scheduler = make_scheduler(optimizer, args)
+        scheduler = make_common_scheduler(optimizer, args)
         
 
         # Wrap for distributed training if available
@@ -266,14 +188,14 @@ def train(rank, args):
             for (base_alpha_s, base_alpha_i, alpha_rgb) in alpha_combinations:
                 output_list, gt_list = results[(base_alpha_s, base_alpha_i, alpha_rgb)]
                 
-                # (1) Compute metrics with use_GT_mean=True
-                avg_psnr_gt, avg_ssim_gt, avg_lpips_gt = metrics(output_list, gt_list, use_GT_mean=True)
-                print("===> Evaluation (use_GT_mean=True, base_alpha_s={}, base_alpha_i={}, alpha_rgb={}) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(
+                # (1) Compute metrics with use_gt_mean=True
+                avg_psnr_gt, avg_ssim_gt, avg_lpips_gt = metrics(output_list, gt_list, use_gt_mean=True)
+                print("===> Evaluation (use_gt_mean=True, base_alpha_s={}, base_alpha_i={}, alpha_rgb={}) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(
                     base_alpha_s, base_alpha_i, alpha_rgb, avg_psnr_gt, avg_ssim_gt, avg_lpips_gt))
                 
-                # (2) Compute metrics with use_GT_mean=False
-                avg_psnr, avg_ssim, avg_lpips = metrics(output_list, gt_list, use_GT_mean=False)
-                print("===> Evaluation (use_GT_mean=False, base_alpha_s={}, base_alpha_i={}, alpha_rgb={}) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(
+                # (2) Compute metrics with use_gt_mean=False
+                avg_psnr, avg_ssim, avg_lpips = metrics(output_list, gt_list, use_gt_mean=False)
+                print("===> Evaluation (use_gt_mean=False, base_alpha_s={}, base_alpha_i={}, alpha_rgb={}) - PSNR: {:.4f} dB || SSIM: {:.4f} || LPIPS: {:.4f}".format(
                     base_alpha_s, base_alpha_i, alpha_rgb, avg_psnr, avg_ssim, avg_lpips))
                 
                 last_metrics = (avg_psnr, avg_ssim, avg_lpips)
@@ -281,7 +203,7 @@ def train(rank, args):
             return last_metrics
 
 
-        for epoch in range(start_epoch+1, args.nEpochs + start_epoch + 1):
+        for epoch in range(start_epoch+1, args.n_epochs + start_epoch + 1):
             # Set epoch for distributed sampler
             if dist.is_dist_available_and_initialized():
                 training_data_loader.sampler.set_epoch(epoch)

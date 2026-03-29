@@ -76,7 +76,7 @@ def get_lpips_model():
         _lpips_model.cuda()
     return _lpips_model
 
-def metrics(im_list, label_list, use_GT_mean):
+def metrics(im_list, label_list, use_gt_mean):
     avg_psnr = 0
     avg_ssim = 0
     avg_lpips = 0
@@ -105,7 +105,7 @@ def metrics(im_list, label_list, use_GT_mean):
         im2 = np.array(im2)
         
         # Use metrics_one function
-        score_psnr, score_ssim, score_lpips = metrics_one(im1, im2, use_GT_mean)
+        score_psnr, score_ssim, score_lpips = metrics_one(im1, im2, use_gt_mean)
     
         avg_psnr += score_psnr
         avg_ssim += score_ssim
@@ -166,13 +166,13 @@ def metrics_no_ref(im_list):
     return avg_niqe, avg_brisque
 
 
-def metrics_one(im1, im2, use_GT_mean):
+def metrics_one(im1, im2, use_gt_mean):
     if isinstance(im1, Image.Image):
         im1 = np.array(im1)
     if isinstance(im2, Image.Image):
         im2 = np.array(im2)
 
-    if use_GT_mean:
+    if use_gt_mean:
         mean_restored = cv2.cvtColor(im1, cv2.COLOR_RGB2GRAY).mean()
         mean_target = cv2.cvtColor(im2, cv2.COLOR_RGB2GRAY).mean()
         im1 = np.clip(im1 * (mean_target/mean_restored), 0, 255)

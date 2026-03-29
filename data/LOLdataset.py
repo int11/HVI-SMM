@@ -56,8 +56,3 @@ class LOLv2DatasetFromFolder(LOLDatasetFromFolder):
 class LOLv2SynDatasetFromFolder(LOLDatasetFromFolder):
     def __init__(self, data_dir, transform=None):
         super().__init__(data_dir, 'Low', 'Normal', transform)
-
-
-
-
-

@@ -30,9 +30,9 @@ def worker_init_fn(worker_id):
 def option():
     # Training settings
     parser = argparse.ArgumentParser(description='CIDNet')
-    parser.add_argument('--batchSize', type=int, default=1, help='training batch size')
-    parser.add_argument('--cropSize', type=int, default=400, help='image crop size (patch size)')
-    parser.add_argument('--nEpochs', type=int, default=1500, help='number of epochs to train for end')
+    parser.add_argument('--batch_size', type=int, default=1, help='training batch size')
+    parser.add_argument('--crop_size', type=int, default=400, help='image crop size (patch size)')
+    parser.add_argument('--n_epochs', type=int, default=1500, help='number of epochs to train for end')
     parser.add_argument('--start_epoch', type=int, default=0, help='number of epochs to start, >0 is retrained a pre-trained pth')
     parser.add_argument('--snapshots', type=int, default=10, help='Snapshots for save checkpoints pth')
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning Rate')
@@ -51,7 +51,7 @@ def option():
     parser.add_argument('--start_warmup', type=str_to_bool, default=True, help='turn False to train without warmup') 
 
     # choose which dataset you want to train, please only set one "True"
-    parser.add_argument('--dataset', type=str, default='lolv2_syn', choices=['lol_v1', 'lolv2_real', 'lolv2_syn', 'lol_blur', 'SID', 'SICE_mix', 'SICE_grad'], help='Choose one dataset to train on')
+    parser.add_argument('--dataset', type=str, default='lolv2_syn', choices=['lol_v1', 'lolv2_real', 'lolv2_syn', 'lol_blur', 'SID', 'SICE_mix', 'SICE_grad', 'fivek'], help='Choose one dataset to train on')
 
     # train datasets
     parser.add_argument('--data_train_lol_blur'     , type=str, default='./datasets/LOL_blur/train')
@@ -69,15 +69,16 @@ def option():
     parser.add_argument('--data_val_SID'            , type=str, default='./datasets/Sony_total_dark/eval/short')
     parser.add_argument('--data_val_SICE_mix'       , type=str, default='./datasets/SICE/Dataset/eval/test')
     parser.add_argument('--data_val_SICE_grad'      , type=str, default='./datasets/SICE/Dataset/eval/test')
+    parser.add_argument('--data_val_fivek'          , type=str, default='./datasets/FiveK/test')
 
     parser.add_argument('--val_folder', default='./results/', help='Location to save validation datasets')
 
     # loss weights
-    parser.add_argument('--HVI_weight', type=float, default=1.0)
-    parser.add_argument('--L1_weight', type=float, default=1.0)
-    parser.add_argument('--D_weight',  type=float, default=0.5)
-    parser.add_argument('--E_weight',  type=float, default=50.0)
-    parser.add_argument('--P_weight',  type=float, default=1e-2)
+    parser.add_argument('--hvi_weight', type=float, default=1.0)
+    parser.add_argument('--l1_weight', type=float, default=1.0)
+    parser.add_argument('--d_weight',  type=float, default=0.5)
+    parser.add_argument('--e_weight',  type=float, default=50.0)
+    parser.add_argument('--p_weight',  type=float, default=1e-2)
     parser.add_argument('--intermediate_weight', type=float, default=0.5, help='Weight for intermediate supervision loss (I_base)')
     parser.add_argument('--use_gt_mean_loss', type=str, default='hvi', choices=['none', 'rgb', 'hvi'], help='Loss type: none (no GT-Mean Loss), rgb (GT-Mean Loss), hvi (Intensity Mean Loss)')
     
@@ -99,40 +100,44 @@ def load_datasets(opt):
     print('===> Loading datasets')
     dataset = opt.dataset
     if dataset == 'lol_v1':
-        train_set = LOLv1DatasetFromFolder(opt.data_train_lol_v1, transform=transform1(opt.cropSize))
-        training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batchSize, shuffle=opt.shuffle, worker_init_fn=worker_init_fn)
+        train_set = LOLv1DatasetFromFolder(opt.data_train_lol_v1, transform=transform1(opt.crop_size))
+        training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batch_size, shuffle=opt.shuffle, worker_init_fn=worker_init_fn)
         test_set = DatasetFromFolderEval(opt.data_val_lol_v1, folder1='low', folder2='high', transform=transform2())
         testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=1, shuffle=False, worker_init_fn=worker_init_fn)
     elif dataset == 'lol_blur':
-        train_set = LOLBlurDatasetFromFolder(opt.data_train_lol_blur, transform=transform1(opt.cropSize))
-        training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batchSize, shuffle=opt.shuffle, worker_init_fn=worker_init_fn)
+        train_set = LOLBlurDatasetFromFolder(opt.data_train_lol_blur, transform=transform1(opt.crop_size))
+        training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batch_size, shuffle=opt.shuffle, worker_init_fn=worker_init_fn)
         test_set = DatasetFromFolderEval(opt.data_val_lol_blur, folder1='low_blur', folder2='high_sharp_scaled', transform=transform2())
         testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=1, shuffle=False, worker_init_fn=worker_init_fn)
     elif dataset == 'lolv2_real':
-        train_set = LOLv2DatasetFromFolder(opt.data_train_lolv2_real, transform=transform1(opt.cropSize))
-        training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batchSize, shuffle=opt.shuffle, worker_init_fn=worker_init_fn)
+        train_set = LOLv2DatasetFromFolder(opt.data_train_lolv2_real, transform=transform1(opt.crop_size))
+        training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batch_size, shuffle=opt.shuffle, worker_init_fn=worker_init_fn)
         test_set = DatasetFromFolderEval(opt.data_val_lolv2_real, folder1='Low', folder2='Normal', transform=transform2())
         testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=1, shuffle=False, worker_init_fn=worker_init_fn)
     elif dataset == 'lolv2_syn':
         train_set = LOLv2SynDatasetFromFolder(opt.data_train_lolv2_syn, transform=transform3())
-        training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batchSize, shuffle=opt.shuffle, worker_init_fn=worker_init_fn)
+        training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batch_size, shuffle=opt.shuffle, worker_init_fn=worker_init_fn)
         test_set = DatasetFromFolderEval(opt.data_val_lolv2_syn, folder1='Low', folder2='Normal', transform=transform2())
         testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=1, shuffle=False, worker_init_fn=worker_init_fn)
     elif dataset == 'SID':
-        train_set = SIDDatasetFromFolder(opt.data_train_SID, transform=transform1(opt.cropSize))
-        training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batchSize, shuffle=opt.shuffle, worker_init_fn=worker_init_fn)
+        train_set = SIDDatasetFromFolder(opt.data_train_SID, transform=transform1(opt.crop_size))
+        training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batch_size, shuffle=opt.shuffle, worker_init_fn=worker_init_fn)
         test_set = DatasetFromFolderEval(opt.data_val_SID, folder1='short', folder2='long', transform=transform2())
         testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=1, shuffle=False, worker_init_fn=worker_init_fn)
     elif dataset == 'SICE_mix':
-        train_set = SICEDatasetFromFolder(opt.data_train_SICE, transform=transform1(opt.cropSize))
-        training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batchSize, shuffle=opt.shuffle, worker_init_fn=worker_init_fn)
+        train_set = SICEDatasetFromFolder(opt.data_train_SICE, transform=transform1(opt.crop_size))
+        training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batch_size, shuffle=opt.shuffle, worker_init_fn=worker_init_fn)
         test_set = SICEDatasetFromFolderEval(opt.data_val_SICE_mix, transform=transform2())
         testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=1, shuffle=False, worker_init_fn=worker_init_fn)
     elif dataset == 'SICE_grad':
-        train_set = SICEDatasetFromFolder(opt.data_train_SICE, transform=transform1(opt.cropSize))
-        training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batchSize, shuffle=opt.shuffle)
+        train_set = SICEDatasetFromFolder(opt.data_train_SICE, transform=transform1(opt.crop_size))
+        training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batch_size, shuffle=opt.shuffle)
         test_set = SICEDatasetFromFolderEval(opt.data_val_SICE_grad, transform=transform2())
         testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=1, shuffle=False)
+    elif dataset == 'fivek':
+        training_data_loader = None
+        test_set = DatasetFromFolderEval(opt.data_val_fivek, folder1='input', folder2='target', transform=transform2())
+        testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=1, shuffle=False, worker_init_fn=worker_init_fn)
     else:
         raise Exception("should choose a valid dataset")
     return training_data_loader, testing_data_loader

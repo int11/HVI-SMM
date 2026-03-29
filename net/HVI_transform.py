@@ -7,7 +7,6 @@ class RGB_HVI(nn.Module):
     def __init__(self):
         super(RGB_HVI, self).__init__()
         self.density_k = torch.nn.Parameter(torch.full([1],0.2)) # k is reciprocal to the paper mentioned
-        self.this_k = 0
         
     def RGB_to_HVI(self, img):
         eps = 1e-8
@@ -31,7 +30,6 @@ class RGB_HVI(nn.Module):
         value = value.unsqueeze(1)
         
         k = self.density_k
-        self.this_k = k.item()
         
         color_sensitive = ((value * 0.5 * pi).sin() + eps).pow(k)
         ch = (2.0 * pi * hue).cos()
@@ -64,7 +62,8 @@ class RGB_HVI(nn.Module):
         I = I * alpha_i
 
         v = I
-        k = self.this_k
+        # Use density_k directly to preserve gradients and ensure it's always available
+        k = self.density_k
         color_sensitive = ((v * 0.5 * pi).sin() + eps).pow(k)
         H = (H) / (color_sensitive + eps)
         V = (V) / (color_sensitive + eps)
