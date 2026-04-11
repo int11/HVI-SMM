@@ -166,5 +166,5 @@ if __name__ == "__main__":
     dummy_input = torch.randn(2, 3, 400, 400)  # Example input tensor
     with torch.no_grad():
         output = model(dummy_input)
-    print(f"Output shape: {output.shape}")  # Should be (2, 3, 400, 400) for RGB output
+    print(f"Output shape: {output[0].shape}")  # Should be (2, 3, 400, 400) for RGB output
     print("Model loaded and tested successfully.")

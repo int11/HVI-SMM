@@ -155,9 +155,12 @@ class Tee:
         self.file.close()
 
 
-def checkpoint(epoch, model, optimizer, path):
+def checkpoint(epoch, model, optimizer, path, filename=None):
     os.makedirs(path, exist_ok=True)
-    model_out_path = os.path.join(path, f"epoch_{epoch}.pth")
+    if filename is None:
+        model_out_path = os.path.join(path, f"epoch_{epoch}.pth")
+    else:
+        model_out_path = os.path.join(path, filename)
 
     # Save model and optimizer states with epoch info
     # Use de_parallel to handle distributed models

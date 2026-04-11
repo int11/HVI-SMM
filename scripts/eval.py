@@ -100,6 +100,7 @@ def eval(model, data, alpha_combinations, unpaired=False):
             results[(base_alpha_s, base_alpha_i, alpha_rgb)][0].append(output_np)
         
         torch.cuda.empty_cache()
+
     
     torch.set_grad_enabled(True)
     return results

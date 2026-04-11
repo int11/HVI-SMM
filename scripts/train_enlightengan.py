@@ -16,10 +16,12 @@ from data.data import transform1, transform2 # transform1 is for training (crop+
 from net.CIDNet_SMM import CIDNet_SMM
 from net.EnlightenGAN import define_D
 from loss.gan_losses import RaGANLoss, SelfFeaturePreservingLoss, GANLoss
+from loss.zerodce_losses import SpatialConsistencyLoss, ExposureControlLoss, ColorConstancyLoss, IlluminationSmoothnessLoss
 import scripts.dist as dist
 from scripts.utils import Tee, checkpoint, compute_model_complexity, init_seed, build_generator_from_args, make_common_scheduler
-from scripts.measure import metrics
+from scripts.measure import metrics, metrics_no_ref
 from scripts.eval import eval as eval_fn
+import scripts.measure as measure_mod
 
 def enlightengan_option():
     # option()이 반환한 parser에 EnlightenGAN 전용 인자를 추가
@@ -42,6 +44,19 @@ def enlightengan_option():
     parser.add_argument('--vgg_choose',     type=str,   default='relu5_1', help='VGG 특징 추출 레이어')
     parser.add_argument('--no_vgg_instance', action='store_true',          help='SFP loss에서 Instance Norm 사용 안 함')
     parser.add_argument('--no_ragan',       action='store_true',          help='RaGAN 대신 일반 GAN loss 사용')
+
+    # ---- Physics Losses (Zero-DCE 기반, lambda=0이면 비활성) ----
+    parser.add_argument('--lambda_spa',   type=float, default=0,
+                        help='Spatial Consistency Loss 가중치')
+    parser.add_argument('--lambda_exp',   type=float, default=0,
+                        help='Exposure Control Loss 가중치')
+    parser.add_argument('--lambda_col',   type=float, default=0,
+                        help='Color Constancy Loss 가중치')
+    parser.add_argument('--lambda_tv',    type=float, default=0,
+                        help='Illumination Smoothness Loss (TV) 가중치')
+
+    # Override default model_file for SMM
+    parser.set_defaults(model_file='net/CIDNet_SMM.py')
 
     return parser
 
@@ -77,6 +92,13 @@ class EnlightenGANModel:
             lr=args.lr, betas=(0.5, 0.999)
         )
         
+        # Physics Losses (lambda > 0인 경우에만 인스턴스 생성)
+        self.phys_losses = {}
+        if args.lambda_spa > 0: self.phys_losses['spa'] = SpatialConsistencyLoss().to(device)
+        if args.lambda_exp > 0: self.phys_losses['exp'] = ExposureControlLoss().to(device)
+        if args.lambda_col > 0: self.phys_losses['col'] = ColorConstancyLoss().to(device)
+        if args.lambda_tv  > 0: self.phys_losses['tv']  = IlluminationSmoothnessLoss().to(device)
+
         # Schedulers
         self.schedulers = [
             make_common_scheduler(self.optimizer_G, args),
@@ -106,11 +128,16 @@ class EnlightenGANModel:
         self.real_low_patches = []
         
         for _ in range(num_patches):
+            # Patch for fake_high and real_low (spatial correspondence)
             w_offset = random.randint(0, max(0, w - ps - 1))
             h_offset = random.randint(0, max(0, h - ps - 1))
             self.fake_patches.append(self.fake_high[:, :, h_offset:h_offset + ps, w_offset:w_offset + ps])
-            self.real_high_patches.append(self.real_high[:, :, h_offset:h_offset + ps, w_offset:w_offset + ps])
             self.real_low_patches.append(self.real_low[:, :, h_offset:h_offset + ps, w_offset:w_offset + ps])
+            
+            # Independent patch for real_high (unpaired, so no spatial correspondence)
+            w_offset_high = random.randint(0, max(0, w - ps - 1))
+            h_offset_high = random.randint(0, max(0, h - ps - 1))
+            self.real_high_patches.append(self.real_high[:, :, h_offset_high:h_offset_high + ps, w_offset_high:w_offset_high + ps])
             
         self.fake_patches = torch.cat(self.fake_patches, dim=0)
         self.real_high_patches = torch.cat(self.real_high_patches, dim=0)
@@ -166,6 +193,20 @@ class EnlightenGANModel:
             self.loss_G_SFP_base = self.criterionSFP(self.fake_high_base, self.real_low)
             self.loss_G += self.args.intermediate_weight * self.loss_G_SFP_base
 
+        # Physics Losses (Zero-DCE 기반)
+        if 'spa' in self.phys_losses:
+            self.loss_phys_spa = self.phys_losses['spa'](self.real_low, self.fake_high)
+            self.loss_G += self.args.lambda_spa * self.loss_phys_spa
+        if 'exp' in self.phys_losses:
+            self.loss_phys_exp = self.phys_losses['exp'](self.fake_high)
+            self.loss_G += self.args.lambda_exp * self.loss_phys_exp
+        if 'col' in self.phys_losses:
+            self.loss_phys_col = self.phys_losses['col'](self.fake_high)
+            self.loss_G += self.args.lambda_col * self.loss_phys_col
+        if 'tv' in self.phys_losses:
+            self.loss_phys_tv = self.phys_losses['tv'](self.fake_high)
+            self.loss_G += self.args.lambda_tv * self.loss_phys_tv
+
         self.loss_G.backward()
 
     def optimize_parameters(self):
@@ -187,7 +228,7 @@ class EnlightenGANModel:
                 scheduler.step()
 
     def get_current_losses(self):
-        return {
+        losses = {
             'G_Loss': self.loss_G.item(),
             'G_GAN_G': self.loss_G_GAN_global.item(),
             'G_GAN_L': self.loss_G_GAN_local.item(),
@@ -196,6 +237,11 @@ class EnlightenGANModel:
             'D_Global': self.loss_D_global.item(),
             'D_Local': self.loss_D_local.item(),
         }
+        if hasattr(self, 'loss_phys_spa'): losses['Phys_SPA'] = self.loss_phys_spa.item()
+        if hasattr(self, 'loss_phys_exp'): losses['Phys_EXP'] = self.loss_phys_exp.item()
+        if hasattr(self, 'loss_phys_col'): losses['Phys_COL'] = self.loss_phys_col.item()
+        if hasattr(self, 'loss_phys_tv'):  losses['Phys_TV']  = self.loss_phys_tv.item()
+        return losses
 
 
 
@@ -205,7 +251,11 @@ def train(rank, args):
 
     device = dist.get_device()
     now = time.strftime("%Y%m%d_%H%M%S")
-    save_dir = f"./weights/enlightengan_{args.dataset}/{now}"
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    save_dir = os.path.join(project_root, 'weights', f"enlightengan_{args.dataset}", now)
+    
+    if dist.is_main_process():
+        os.makedirs(save_dir, exist_ok=True)
     
     with Tee(os.path.join(save_dir, 'train_log.txt')):
         init_seed(args.seed + (rank if rank is not None else 0))
@@ -227,6 +277,11 @@ def train(rank, args):
         
         if dist.is_dist_available_and_initialized():
             train_loader = dist.warp_loader(train_loader, True)
+
+        # Evaluation Dataset (FiveK paired)
+        from data.eval_sets import DatasetFromFolderEval
+        val_dataset = DatasetFromFolderEval(args.data_val_low.replace('/input', ''), folder1='input', folder2='target', transform=transform2())
+        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=1)
 
         # Model
         model = EnlightenGANModel(args, device)
@@ -273,12 +328,47 @@ def train(rank, args):
                         },
                         'optimizer_D_state_dict': model.optimizer_D.state_dict(),
                     }, os.path.join(save_dir, f"epoch_{epoch}_D.pth"))
+
+                    # ---- Evaluation ----
+                    print(f"===> Evaluating at Epoch {epoch}...")
+                    alpha_combinations = [(1.0, 1.0, 1.0)] # Default alpha
+                    eval_results = eval_fn(model.netG, val_loader, alpha_combinations)
+                    output_list, gt_list = eval_results[alpha_combinations[0]]
                     
-                    # Periodic visualization
-                    if not os.path.exists(args.val_folder + 'enlightengan'):
-                        os.makedirs(args.val_folder + 'enlightengan')
-                    res_img = transforms.ToPILImage()(model.fake_high[0].cpu().clamp(0, 1))
-                    res_img.save(f"{args.val_folder}enlightengan/epoch_{epoch}.png")
+                    # Paired metrics (PSNR, SSIM, LPIPS)
+                    avg_psnr, avg_ssim, avg_lpips = metrics(output_list, gt_list, use_gt_mean=False)
+                    avg_psnr_gt, avg_ssim_gt, _ = metrics(output_list, gt_list, use_gt_mean=True)
+                    
+                    # No-reference metrics (NIQE, BRISQUE)
+                    avg_niqe, avg_brisque = metrics_no_ref(output_list)
+                    
+                    print(f"===> Eval Results - PSNR: {avg_psnr:.4f} (GT-mean: {avg_psnr_gt:.4f}), SSIM: {avg_ssim:.4f}, LPIPS: {avg_lpips:.4f}")
+                    print(f"===> Unsupervised Metrics - NIQE: {avg_niqe:.4f}, BRISQUE: {avg_brisque:.4f}")
+                    
+                    if writer:
+                        writer.add_scalar("Metrics/PSNR", avg_psnr, epoch)
+                        writer.add_scalar("Metrics/PSNR_GT", avg_psnr_gt, epoch)
+                        writer.add_scalar("Metrics/SSIM", avg_ssim, epoch)
+                        writer.add_scalar("Metrics/LPIPS", avg_lpips, epoch)
+                        writer.add_scalar("Metrics/NIQE", avg_niqe, epoch)
+                        writer.add_scalar("Metrics/BRISQUE", avg_brisque, epoch)
+                    
+                    model.netG.train() # Back to training mode
+                    
+                # Periodic visualization
+                val_folder = args.val_folder
+                if val_folder.startswith('./'):
+                    val_folder = os.path.join(project_root, val_folder[2:])
+                val_save_path = os.path.join(val_folder, 'enlightengan')
+                os.makedirs(val_save_path, exist_ok=True)
+                
+                input_vis = model.real_low[0].cpu().clamp(0, 1)
+                output_vis = model.fake_high[0].cpu().clamp(0, 1)
+                # Concatenate horizontally
+                combined_vis = torch.cat([input_vis, output_vis], dim=2)
+                
+                res_img = transforms.ToPILImage()(combined_vis)
+                res_img.save(os.path.join(val_save_path, f"epoch_{epoch}.png"))
 
         if writer:
             writer.close()

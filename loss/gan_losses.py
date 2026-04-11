@@ -30,33 +30,19 @@ class SelfFeaturePreservingLoss(nn.Module):
         self.vgg = VGGFeatureExtractor(
             layer_name_list=[layer_name],
             vgg_type=vgg_type,
-            use_input_norm=False, # We use custom preprocess
+            use_input_norm=True, # Option A: Use standard ImageNet normalization
             range_norm=False
         )
         self.use_instance_norm = use_instance_norm
         if use_instance_norm:
             # relu5_1 has 512 channels in VGG16
             self.instancenorm = nn.InstanceNorm2d(512, affine=False)
-        
-        # VGG mean for subtraction (BGR format, range [0, 255])
-        self.register_buffer('vgg_mean', torch.tensor([103.939, 116.779, 123.680]).view(1, 3, 1, 1))
-
-    def preprocess(self, x):
-        # EnlightenGAN expects input in [-1, 1], converts to [0, 255] BGR
-        # Assuming input x is in [0, 1] RGB (as per HVI-SMM standard)
-        # Convert RGB to BGR
-        x_bgr = x[:, [2, 1, 0], :, :]
-        # [0, 1] -> [0, 255]
-        x_255 = x_bgr * 255.0
-        # Subtract mean
-        return x_255 - self.vgg_mean
 
     def forward(self, pred, target):
-        pred_vgg = self.preprocess(pred)
-        target_vgg = self.preprocess(target)
-        
-        pred_fea = self.vgg(pred_vgg)[self.vgg.layer_name_list[0]]
-        target_fea = self.vgg(target_vgg)[self.vgg.layer_name_list[0]]
+        # ImageNet normalization is now handled inside VGGFeatureExtractor.
+        # It expects input in [0, 1] RGB, which is our current format.
+        pred_fea = self.vgg(pred)[self.vgg.layer_name_list[0]]
+        target_fea = self.vgg(target)[self.vgg.layer_name_list[0]]
         
         if self.use_instance_norm:
             return F.mse_loss(self.instancenorm(pred_fea), self.instancenorm(target_fea))
