@@ -50,7 +50,7 @@ from torch.utils.tensorboard import SummaryWriter
 from scripts.options import option          # 공통 인자 확장용 (option() 반환 parser에 add_argument)
 from scripts.eval import eval as eval_model
 from scripts.measure import metrics
-from scripts.utils import Tee, fofa_checkpoint, fofa_load_checkpoint, compute_model_complexity, init_seed, build_generator_from_args, make_common_scheduler
+from scripts.utils import Tee, fofa_checkpoint, fofa_load_checkpoint, compute_model_complexity, init_seed, build_generator_from_args, make_common_scheduler, plot_from_tfevents
 from data.scheduler import *                # CosineAnnealingRestartLR, GradualWarmupScheduler 등
 import scripts.dist as dist
 
@@ -58,9 +58,8 @@ from data.unpaired_dataset import UnpairedDataset
 from data.eval_sets import DatasetFromFolderEval
 
 from net.fofa_modules import FoundationEncoder, FeatureProjector, FoFADiscriminator
-from loss.gan_losses import FoFADiscriminatorLoss
-from loss.zerodce_losses import (SpatialConsistencyLoss, ExposureControlLoss, 
-                                ColorConstancyLoss, IlluminationSmoothnessLoss)
+from loss.losses import (FoFADiscriminatorLoss, SpatialConsistencyLoss, 
+                         ExposureControlLoss, ColorConstancyLoss, IlluminationSmoothnessLoss)
 
 
 # ---------------------------------------------------------------------------
@@ -149,11 +148,11 @@ def build_train_loader(args) -> DataLoader:
     dataset = UnpairedDataset(
         low_dir=args.data_low,
         high_dir=args.data_high,
-        transform=transform_train(args.crop_size),
+        transform=transform_train(args.cropSize),
     )
     return DataLoader(
         dataset,
-        batch_size=args.batch_size,
+        batch_size=args.batchSize,
         shuffle=args.shuffle,
         num_workers=args.threads,
         pin_memory=True,
@@ -190,7 +189,7 @@ def build_fofa_modules(args, device):
     # 객체 지향적으로 리팩토링된 FoundationEncoder 호출
     encoder = FoundationEncoder(
         model_names=use_models,
-        input_size=args.crop_size,
+        input_size=args.cropSize,
     ).to(device)
 
     projector = FeatureProjector(
@@ -391,7 +390,7 @@ def run_eval(generator, eval_loader, args):
     alpha_combos = [(1.0, 1.0, 1.0)]
     results = eval_model(generator, eval_loader, alpha_combos)
     out_list, gt_list = results[(1.0, 1.0, 1.0)]
-    avg_psnr, avg_ssim, avg_lpips = metrics(out_list, gt_list, use_gt_mean=True)
+    avg_psnr, avg_ssim, avg_lpips = metrics(out_list, gt_list, use_GT_mean=True)
     return avg_psnr, avg_ssim, avg_lpips
 
 
@@ -426,7 +425,7 @@ def train(rank, args):
 
         if dist.is_main_process():
             flops, params = compute_model_complexity(
-                generator, input_size=(1, 3, args.crop_size, args.crop_size))
+                generator, input_size=(1, 3, args.cropSize, args.cropSize))
             print(f"Generator FLOPs: {flops}, Params: {params}")
 
         print('===> Building FoFA modules (Encoder / Projector / Discriminator)')
@@ -485,7 +484,7 @@ def train(rank, args):
             encoder       = dist.warp_model(encoder,       sync_bn=False, find_unused_parameters=True)
 
         # ---- 학습 루프 ----
-        for epoch in range(start_epoch + 1, args.n_epochs + start_epoch + 1):
+        for epoch in range(start_epoch + 1, args.nEpochs + start_epoch + 1):
             if dist.is_dist_available_and_initialized():
                 train_loader.sampler.set_epoch(epoch)
 
@@ -513,6 +512,9 @@ def train(rank, args):
                 writer.add_scalar('Loss/D', loss_d, epoch)
                 writer.add_scalar('LR/G',   optimizer_g.param_groups[0]['lr'], epoch)
                 writer.add_scalar('LR/D',   optimizer_d.param_groups[0]['lr'], epoch)
+                writer.flush()
+                if dist.is_main_process():
+                    plot_from_tfevents(save_dir)
 
             # Checkpoint + Eval
             if epoch % args.snapshots == 0 and dist.is_main_process():

@@ -18,7 +18,7 @@ from net.EnlightenGAN import define_D
 from loss.gan_losses import RaGANLoss, SelfFeaturePreservingLoss, GANLoss
 from loss.zerodce_losses import SpatialConsistencyLoss, ExposureControlLoss, ColorConstancyLoss, IlluminationSmoothnessLoss
 import scripts.dist as dist
-from scripts.utils import Tee, checkpoint, compute_model_complexity, init_seed, build_generator_from_args, make_common_scheduler
+from scripts.utils import Tee, checkpoint, compute_model_complexity, init_seed, build_generator_from_args, make_common_scheduler, plot_from_tfevents
 from scripts.measure import metrics, metrics_no_ref
 from scripts.eval import eval as eval_fn
 import scripts.measure as measure_mod
@@ -265,6 +265,7 @@ def train(rank, args):
             writer = SummaryWriter(os.path.join(save_dir, 'tensorboard'))
             print(f"Logging to {save_dir}")
 
+        print(args)
         # Dataset (Unpaired)
         low_dir = args.data_low
         high_dir = args.data_high
@@ -315,7 +316,9 @@ def train(rank, args):
                 print(f"===> Epoch {epoch} Complete. Time: {epoch_time:.2f}s | {metrics_str}")
                 for k, v in avg_losses.items():
                     writer.add_scalar(f"Loss/{k}", v, epoch)
-                
+                writer.flush()
+                plot_from_tfevents(save_dir)
+
                 # Save checkpoint
                 if epoch % args.snapshots == 0:
                     checkpoint(epoch, model.netG, model.optimizer_G, save_dir, filename=f"epoch_{epoch}_G.pth")

@@ -15,7 +15,7 @@ from data.scheduler import *
 from datetime import datetime
 from scripts.measure import metrics
 import scripts.dist as dist
-from scripts.utils import Tee, checkpoint, compute_model_complexity, init_seed, build_generator_from_args, make_common_scheduler
+from scripts.utils import Tee, checkpoint, compute_model_complexity, init_seed, build_generator_from_args, make_common_scheduler, plot_from_tfevents
 from torch.utils.tensorboard import SummaryWriter
 from net.BaseCIDNetWithSMM import BaseCIDNet_SMM
 
@@ -216,24 +216,25 @@ def train(rank, args):
             print("===> Epoch[{}] Avg Loss: {:.6f} || Learning rate: {:.6f} || Time: {:.2f}s".format(
                 epoch, avg_loss, optimizer.param_groups[0]['lr'], epoch_time))
             
-            # Log to TensorBoard
-            if writer is not None:
-                writer.add_scalar('Loss/train', avg_loss, epoch)
-                writer.add_scalar('Learning_Rate', optimizer.param_groups[0]['lr'], epoch)
-            
-            if epoch % args.snapshots == 0 and dist.is_main_process():
-                checkpoint(epoch, model, optimizer, save_dir)
-
-                # Evaluate all alpha combinations in a single batched pass
-                alpha_combinations = [(1.3, 1.0, 1.0), (1.0, 1.0, 0.8), (1.0, 1.0, 1.0)]
-                avg_psnr, avg_ssim, avg_lpips = eval_and_log_batched(alpha_combinations)
-                
-                
-                # Log evaluation metrics to TensorBoard
+            if dist.is_main_process():
                 if writer is not None:
-                    writer.add_scalar('Metrics/PSNR', avg_psnr, epoch)
-                    writer.add_scalar('Metrics/SSIM', avg_ssim, epoch)
-                    writer.add_scalar('Metrics/LPIPS', avg_lpips, epoch)
+                    writer.add_scalar('Loss/train', avg_loss, epoch)
+                    writer.add_scalar('Learning_Rate', optimizer.param_groups[0]['lr'], epoch)
+                    writer.flush()
+                    plot_from_tfevents(save_dir)
+
+                if epoch % args.snapshots == 0:
+                    checkpoint(epoch, model, optimizer, save_dir)
+
+                    # Evaluate all alpha combinations in a single batched pass
+                    alpha_combinations = [(1.3, 1.0, 1.0), (1.0, 1.0, 0.8), (1.0, 1.0, 1.0)]
+                    avg_psnr, avg_ssim, avg_lpips = eval_and_log_batched(alpha_combinations)
+
+                    # Log evaluation metrics to TensorBoard
+                    if writer is not None:
+                        writer.add_scalar('Metrics/PSNR', avg_psnr, epoch)
+                        writer.add_scalar('Metrics/SSIM', avg_ssim, epoch)
+                        writer.add_scalar('Metrics/LPIPS', avg_lpips, epoch)
 
             torch.cuda.empty_cache()
         

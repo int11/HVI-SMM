@@ -1,5 +1,6 @@
 import os
 import sys
+import glob
 import torch
 import numpy as np
 import random
@@ -10,6 +11,9 @@ from datetime import datetime
 import scripts.dist as dist
 from data.scheduler import CosineAnnealingRestartLR, GradualWarmupScheduler
 from fvcore.nn import FlopCountAnalysis
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 def init_seed(seed, deterministic=False, benchmark=True):
     print(f"Using seed: {seed}")
@@ -200,6 +204,75 @@ def fofa_checkpoint(epoch, generator, discriminator,
     }
     torch.save(ckpt, out_path)
     print(f"FoFA checkpoint saved to {out_path}")
+
+
+def plot_from_tfevents(save_dir: str, filename: str = 'training_plot.png'):
+    """
+    save_dir/tensorboard/ 의 events 파일을 읽어 PNG로 저장.
+    매 epoch 끝에 writer.flush() 후 호출.
+    """
+    from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+
+    tb_dir = os.path.join(save_dir, 'tensorboard')
+    event_files = glob.glob(os.path.join(tb_dir, 'events.out.tfevents.*'))
+    if not event_files:
+        return
+
+    ea = EventAccumulator(event_files[0])
+    ea.Reload()
+    scalar_tags = ea.Tags().get('scalars', [])
+    if not scalar_tags:
+        return
+
+    loss_tags   = [t for t in scalar_tags if t.startswith('Loss/')]
+    metric_tags = [t for t in scalar_tags if t.startswith('Metrics/') or t.startswith('Eval/')]
+    lr_tags     = [t for t in scalar_tags if 'LR' in t or 'Learning' in t]
+
+    n_rows = 1 + (1 if metric_tags else 0)
+    fig, axes = plt.subplots(n_rows, 1, figsize=(14, 5 * n_rows))
+    if n_rows == 1:
+        axes = [axes]
+
+    # Loss plot
+    ax = axes[0]
+    for tag in loss_tags + lr_tags:
+        events = ea.Scalars(tag)
+        steps = [e.step for e in events]
+        vals  = [e.value for e in events]
+        style = '--' if tag in lr_tags else '-'
+        ax.plot(steps, vals, style, label=tag.split('/')[-1], linewidth=1.2, alpha=0.85)
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Loss')
+    ax.set_title('Training Losses')
+    ax.legend(ncol=4, fontsize=8)
+    ax.grid(True, alpha=0.3)
+
+    # Metrics plot
+    if metric_tags:
+        ax  = axes[1]
+        ax2 = ax.twinx()
+        right_axis = {'SSIM', 'LPIPS'}
+        for tag in metric_tags:
+            events = ea.Scalars(tag)
+            steps = [e.step for e in events]
+            vals  = [e.value for e in events]
+            name  = tag.split('/')[-1]
+            if name in right_axis:
+                ax2.plot(steps, vals, 'o--', label=name, markersize=4, linewidth=1.2)
+            else:
+                ax.plot(steps, vals, 'o-', label=name, markersize=4, linewidth=1.2)
+        ax.set_xlabel('Epoch')
+        ax.set_ylabel('PSNR / NIQE / BRISQUE')
+        ax2.set_ylabel('SSIM / LPIPS')
+        ax.set_title('Eval Metrics')
+        lines1, labels1 = ax.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax.legend(lines1 + lines2, labels1 + labels2, ncol=3, fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, filename), dpi=120)
+    plt.close(fig)
 
 
 def fofa_load_checkpoint(path, generator, discriminator,
