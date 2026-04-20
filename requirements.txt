@@ -23,3 +23,5 @@ segment-anything
 # FoFA Foundation Models
 huggingface_hub
 sam2
+kaggle
+gdown
