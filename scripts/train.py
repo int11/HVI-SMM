@@ -9,7 +9,7 @@ import torch.optim as optim
 import importlib
 from scripts.options import option, load_datasets
 from scripts.eval import eval
-from data.data import *
+from data import *
 from loss.hvi_losses import CIDNetCombinedLoss, CIDNetWithIntermediateLoss
 from data.scheduler import *
 from datetime import datetime

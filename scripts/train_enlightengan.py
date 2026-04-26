@@ -3,6 +3,7 @@ import sys
 import time
 import random
 import torch
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
@@ -12,11 +13,15 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scripts.options import option
 from data.unpaired_dataset import UnpairedDataset
-from data.data import transform1, transform2 # transform1 is for training (crop+augment)
+from data import train_crop_transform, eval_pad8_transform
 from net.CIDNet_SMM import CIDNet_SMM
 from net.EnlightenGAN import define_D
 from loss.gan_losses import RaGANLoss, SelfFeaturePreservingLoss, GANLoss
-from loss.zerodce_losses import SpatialConsistencyLoss, ExposureControlLoss, ColorConstancyLoss, IlluminationSmoothnessLoss
+from loss.zerodce_losses import (
+    ColorConstancyLoss,
+    IntensityExposureLoss, IntensitySpatialLoss, IntensityTVLoss,
+    HVPreservationLoss, HVIIntensityTVLoss,
+)
 import scripts.dist as dist
 from scripts.utils import Tee, checkpoint, compute_model_complexity, init_seed, build_generator_from_args, make_common_scheduler, plot_from_tfevents
 from scripts.measure import metrics, metrics_no_ref
@@ -53,7 +58,11 @@ def enlightengan_option():
     parser.add_argument('--lambda_col',   type=float, default=0,
                         help='Color Constancy Loss 가중치')
     parser.add_argument('--lambda_tv',    type=float, default=0,
-                        help='Illumination Smoothness Loss (TV) 가중치')
+                        help='Illumination Smoothness Loss (TV) 가중치 (I-map 1채널 적용; 기존 3채널 대비 스케일 ~1/3, 권장: lambda_tv=60)')
+    parser.add_argument('--lambda_hv_preserve', type=float, default=0,
+                        help='HV-plane Preservation Loss 가중치 (HVI-native 색상 보존 prior, 권장: 1.0)')
+    parser.add_argument('--lambda_i_tv_hvi', type=float, default=0,
+                        help='HVI-space Intensity TV Loss 가중치 (선택적, 기본 비활성)')
 
     # Override default model_file for SMM
     parser.set_defaults(model_file='net/CIDNet_SMM.py')
@@ -93,11 +102,17 @@ class EnlightenGANModel:
         )
         
         # Physics Losses (lambda > 0인 경우에만 인스턴스 생성)
+        # spa/exp/tv는 HVI Max-RGB intensity 기반으로 교체됨
         self.phys_losses = {}
-        if args.lambda_spa > 0: self.phys_losses['spa'] = SpatialConsistencyLoss().to(device)
-        if args.lambda_exp > 0: self.phys_losses['exp'] = ExposureControlLoss().to(device)
+        if args.lambda_spa > 0: self.phys_losses['spa'] = IntensitySpatialLoss().to(device)
+        if args.lambda_exp > 0: self.phys_losses['exp'] = IntensityExposureLoss().to(device)
         if args.lambda_col > 0: self.phys_losses['col'] = ColorConstancyLoss().to(device)
-        if args.lambda_tv  > 0: self.phys_losses['tv']  = IlluminationSmoothnessLoss().to(device)
+        if args.lambda_tv  > 0: self.phys_losses['tv']  = IntensityTVLoss().to(device)
+        # HVI-native priors (netG.trans 재사용)
+        if args.lambda_hv_preserve > 0:
+            self.phys_losses['hv_preserve'] = HVPreservationLoss(self.netG.trans).to(device)
+        if args.lambda_i_tv_hvi > 0:
+            self.phys_losses['i_tv_hvi'] = HVIIntensityTVLoss(self.netG.trans).to(device)
 
         # Schedulers
         self.schedulers = [
@@ -206,6 +221,12 @@ class EnlightenGANModel:
         if 'tv' in self.phys_losses:
             self.loss_phys_tv = self.phys_losses['tv'](self.fake_high)
             self.loss_G += self.args.lambda_tv * self.loss_phys_tv
+        if 'hv_preserve' in self.phys_losses:
+            self.loss_phys_hv = self.phys_losses['hv_preserve'](self.fake_high, self.real_low)
+            self.loss_G += self.args.lambda_hv_preserve * self.loss_phys_hv
+        if 'i_tv_hvi' in self.phys_losses:
+            self.loss_phys_i_tv_hvi = self.phys_losses['i_tv_hvi'](self.fake_high)
+            self.loss_G += self.args.lambda_i_tv_hvi * self.loss_phys_i_tv_hvi
 
         self.loss_G.backward()
 
@@ -237,10 +258,12 @@ class EnlightenGANModel:
             'D_Global': self.loss_D_global.item(),
             'D_Local': self.loss_D_local.item(),
         }
-        if hasattr(self, 'loss_phys_spa'): losses['Phys_SPA'] = self.loss_phys_spa.item()
-        if hasattr(self, 'loss_phys_exp'): losses['Phys_EXP'] = self.loss_phys_exp.item()
-        if hasattr(self, 'loss_phys_col'): losses['Phys_COL'] = self.loss_phys_col.item()
-        if hasattr(self, 'loss_phys_tv'):  losses['Phys_TV']  = self.loss_phys_tv.item()
+        if hasattr(self, 'loss_phys_spa'):      losses['Phys_SPA']      = self.loss_phys_spa.item()
+        if hasattr(self, 'loss_phys_exp'):      losses['Phys_EXP']      = self.loss_phys_exp.item()
+        if hasattr(self, 'loss_phys_col'):      losses['Phys_COL']      = self.loss_phys_col.item()
+        if hasattr(self, 'loss_phys_tv'):       losses['Phys_TV']       = self.loss_phys_tv.item()
+        if hasattr(self, 'loss_phys_hv'):       losses['Phys_HV']       = self.loss_phys_hv.item()
+        if hasattr(self, 'loss_phys_i_tv_hvi'): losses['Phys_ITV_HVI'] = self.loss_phys_i_tv_hvi.item()
         return losses
 
 
@@ -270,7 +293,7 @@ def train(rank, args):
         low_dir = args.data_low
         high_dir = args.data_high
         
-        train_dataset = UnpairedDataset(low_dir, high_dir, transform=transform1(args.crop_size))
+        train_dataset = UnpairedDataset(low_dir, high_dir, transform=train_crop_transform(args.crop_size))
         train_loader = torch.utils.data.DataLoader(
             train_dataset, batch_size=args.batch_size, shuffle=True,
             num_workers=args.threads, pin_memory=True
@@ -280,13 +303,23 @@ def train(rank, args):
             train_loader = dist.warp_loader(train_loader, True)
 
         # Evaluation Dataset (FiveK paired)
-        from data.eval_sets import DatasetFromFolderEval
-        val_dataset = DatasetFromFolderEval(args.data_val_low.replace('/input', ''), folder1='input', folder2='target', transform=transform2())
+        from data.eval_sets import PairedEvalDataset
+        val_dataset = PairedEvalDataset(args.data_val_low.replace('/input', ''), folder1='input', folder2='target', transform=eval_pad8_transform())
         val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=1)
 
         # Model
         model = EnlightenGANModel(args, device)
-        
+
+        # Snapshot 시각화용 고정 샘플 (run 내내 동일 입력으로 진전 관찰)
+        snapshot_dir = os.path.join(save_dir, 'results')
+        if dist.is_main_process():
+            os.makedirs(os.path.join(snapshot_dir, 'train'), exist_ok=True)
+            os.makedirs(os.path.join(snapshot_dir, 'eval'), exist_ok=True)
+        num_vis = min(4, len(train_dataset), len(val_dataset))
+        fixed_train_low = torch.stack(
+            [train_dataset[i][0] for i in range(num_vis)]
+        ).to(device)
+
         # Snapshots and iteration logic
         for epoch in range(args.start_epoch + 1, args.n_epochs + 1):
             if dist.is_dist_available_and_initialized():
@@ -356,22 +389,43 @@ def train(rank, args):
                         writer.add_scalar("Metrics/NIQE", avg_niqe, epoch)
                         writer.add_scalar("Metrics/BRISQUE", avg_brisque, epoch)
                     
+                    # ---- Train snapshot (고정 unpaired 샘플, input|output 그리드) ----
+                    model.netG.eval()
+                    with torch.no_grad():
+                        t_out = model.netG(fixed_train_low)
+                        t_fake = t_out[0] if isinstance(t_out, (tuple, list)) else t_out
+                    train_rows = []
+                    for i in range(fixed_train_low.size(0)):
+                        row = torch.cat([
+                            fixed_train_low[i].cpu().clamp(0, 1),
+                            t_fake[i].cpu().clamp(0, 1),
+                        ], dim=2)
+                        train_rows.append(row)
+                    train_grid = torch.cat(train_rows, dim=1)
+                    transforms.ToPILImage()(train_grid).save(
+                        os.path.join(snapshot_dir, 'train', f"epoch_{epoch}.png")
+                    )
+
+                    # ---- Eval snapshot (paired, input|output|GT 그리드, zero-padding) ----
+                    n_eval_vis = min(num_vis, len(output_list))
+                    triples = []
+                    for i in range(n_eval_vis):
+                        inp = val_dataset[i][0].clamp(0, 1)
+                        outp = torch.from_numpy(output_list[i]).permute(2, 0, 1).clamp(0, 1)
+                        gt = transforms.ToTensor()(gt_list[i]).clamp(0, 1)
+                        triples.append(torch.cat([inp, outp, gt], dim=2))
+                    max_h = max(t.shape[1] for t in triples)
+                    max_w = max(t.shape[2] for t in triples)
+                    padded = [
+                        F.pad(t, (0, max_w - t.shape[2], 0, max_h - t.shape[1]), value=0)
+                        for t in triples
+                    ]
+                    eval_grid = torch.cat(padded, dim=1)
+                    transforms.ToPILImage()(eval_grid).save(
+                        os.path.join(snapshot_dir, 'eval', f"epoch_{epoch}.png")
+                    )
+
                     model.netG.train() # Back to training mode
-                    
-                # Periodic visualization
-                val_folder = args.val_folder
-                if val_folder.startswith('./'):
-                    val_folder = os.path.join(project_root, val_folder[2:])
-                val_save_path = os.path.join(val_folder, 'enlightengan')
-                os.makedirs(val_save_path, exist_ok=True)
-                
-                input_vis = model.real_low[0].cpu().clamp(0, 1)
-                output_vis = model.fake_high[0].cpu().clamp(0, 1)
-                # Concatenate horizontally
-                combined_vis = torch.cat([input_vis, output_vis], dim=2)
-                
-                res_img = transforms.ToPILImage()(combined_vis)
-                res_img.save(os.path.join(val_save_path, f"epoch_{epoch}.png"))
 
         if writer:
             writer.close()

@@ -2,10 +2,11 @@ import argparse
 import random
 import numpy as np
 from torch.utils.data import DataLoader
-from data.data import transform1, transform2, transform3
-from data.LOLdataset import LOLv1DatasetFromFolder, LOLv2DatasetFromFolder, LOLv2SynDatasetFromFolder
-from data.eval_sets import DatasetFromFolderEval, SICEDatasetFromFolderEval
-from data.SICE_blur_SID import LOLBlurDatasetFromFolder, SIDDatasetFromFolder, SICEDatasetFromFolder
+from data import (
+    train_crop_transform, eval_pad8_transform, flip_only_transform,
+    PairedFlatFolderDataset, PairedSubfolderDataset, SubfolderWithFlatGTDataset,
+    PairedEvalDataset, SingleFolderEvalDataset,
+)
 
 
 def str_to_bool(v):
@@ -100,43 +101,43 @@ def load_datasets(opt):
     print('===> Loading datasets')
     dataset = opt.dataset
     if dataset == 'lol_v1':
-        train_set = LOLv1DatasetFromFolder(opt.data_train_lol_v1, transform=transform1(opt.crop_size))
+        train_set = PairedFlatFolderDataset(opt.data_train_lol_v1, 'low', 'high', transform=train_crop_transform(opt.crop_size))
         training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batch_size, shuffle=opt.shuffle, worker_init_fn=worker_init_fn)
-        test_set = DatasetFromFolderEval(opt.data_val_lol_v1, folder1='low', folder2='high', transform=transform2())
+        test_set = PairedEvalDataset(opt.data_val_lol_v1, folder1='low', folder2='high', transform=eval_pad8_transform())
         testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=1, shuffle=False, worker_init_fn=worker_init_fn)
     elif dataset == 'lol_blur':
-        train_set = LOLBlurDatasetFromFolder(opt.data_train_lol_blur, transform=transform1(opt.crop_size))
+        train_set = PairedSubfolderDataset(opt.data_train_lol_blur, 'low_blur', 'high_sharp_scaled', gt_mode='per_file', transform=train_crop_transform(opt.crop_size))
         training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batch_size, shuffle=opt.shuffle, worker_init_fn=worker_init_fn)
-        test_set = DatasetFromFolderEval(opt.data_val_lol_blur, folder1='low_blur', folder2='high_sharp_scaled', transform=transform2())
+        test_set = PairedEvalDataset(opt.data_val_lol_blur, folder1='low_blur', folder2='high_sharp_scaled', transform=eval_pad8_transform())
         testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=1, shuffle=False, worker_init_fn=worker_init_fn)
     elif dataset == 'lolv2_real':
-        train_set = LOLv2DatasetFromFolder(opt.data_train_lolv2_real, transform=transform1(opt.crop_size))
+        train_set = PairedFlatFolderDataset(opt.data_train_lolv2_real, 'Low', 'Normal', transform=train_crop_transform(opt.crop_size))
         training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batch_size, shuffle=opt.shuffle, worker_init_fn=worker_init_fn)
-        test_set = DatasetFromFolderEval(opt.data_val_lolv2_real, folder1='Low', folder2='Normal', transform=transform2())
+        test_set = PairedEvalDataset(opt.data_val_lolv2_real, folder1='Low', folder2='Normal', transform=eval_pad8_transform())
         testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=1, shuffle=False, worker_init_fn=worker_init_fn)
     elif dataset == 'lolv2_syn':
-        train_set = LOLv2SynDatasetFromFolder(opt.data_train_lolv2_syn, transform=transform3())
+        train_set = PairedFlatFolderDataset(opt.data_train_lolv2_syn, 'Low', 'Normal', transform=flip_only_transform())
         training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batch_size, shuffle=opt.shuffle, worker_init_fn=worker_init_fn)
-        test_set = DatasetFromFolderEval(opt.data_val_lolv2_syn, folder1='Low', folder2='Normal', transform=transform2())
+        test_set = PairedEvalDataset(opt.data_val_lolv2_syn, folder1='Low', folder2='Normal', transform=eval_pad8_transform())
         testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=1, shuffle=False, worker_init_fn=worker_init_fn)
     elif dataset == 'SID':
-        train_set = SIDDatasetFromFolder(opt.data_train_SID, transform=transform1(opt.crop_size))
+        train_set = PairedSubfolderDataset(opt.data_train_SID, 'short', 'long', gt_mode='single', transform=train_crop_transform(opt.crop_size))
         training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batch_size, shuffle=opt.shuffle, worker_init_fn=worker_init_fn)
-        test_set = DatasetFromFolderEval(opt.data_val_SID, folder1='short', folder2='long', transform=transform2())
+        test_set = PairedEvalDataset(opt.data_val_SID, folder1='short', folder2='long', transform=eval_pad8_transform())
         testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=1, shuffle=False, worker_init_fn=worker_init_fn)
     elif dataset == 'SICE_mix':
-        train_set = SICEDatasetFromFolder(opt.data_train_SICE, transform=transform1(opt.crop_size))
+        train_set = SubfolderWithFlatGTDataset(opt.data_train_SICE, label_dir_name='label', transform=train_crop_transform(opt.crop_size))
         training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batch_size, shuffle=opt.shuffle, worker_init_fn=worker_init_fn)
-        test_set = SICEDatasetFromFolderEval(opt.data_val_SICE_mix, transform=transform2())
+        test_set = SingleFolderEvalDataset(opt.data_val_SICE_mix, transform=eval_pad8_transform())
         testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=1, shuffle=False, worker_init_fn=worker_init_fn)
     elif dataset == 'SICE_grad':
-        train_set = SICEDatasetFromFolder(opt.data_train_SICE, transform=transform1(opt.crop_size))
+        train_set = SubfolderWithFlatGTDataset(opt.data_train_SICE, label_dir_name='label', transform=train_crop_transform(opt.crop_size))
         training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batch_size, shuffle=opt.shuffle)
-        test_set = SICEDatasetFromFolderEval(opt.data_val_SICE_grad, transform=transform2())
+        test_set = SingleFolderEvalDataset(opt.data_val_SICE_grad, transform=eval_pad8_transform())
         testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=1, shuffle=False)
     elif dataset == 'fivek':
         training_data_loader = None
-        test_set = DatasetFromFolderEval(opt.data_val_fivek, folder1='input', folder2='target', transform=transform2())
+        test_set = PairedEvalDataset(opt.data_val_fivek, folder1='input', folder2='target', transform=eval_pad8_transform())
         testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=1, shuffle=False, worker_init_fn=worker_init_fn)
     else:
         raise Exception("should choose a valid dataset")

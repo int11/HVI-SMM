@@ -1,7 +1,7 @@
 import os
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from data.data import *
+from data import *
 from loss import *
 from scripts.measure import metrics, metrics_no_ref
 import scripts.dist as dist
@@ -16,7 +16,7 @@ from net.BaseCIDNetWithSMM import BaseCIDNet_SMM
 from torchvision.transforms import ToPILImage, ToTensor
 import torch.utils.data
 from torch.utils.data import DataLoader
-from data.eval_sets import SICEDatasetFromFolderEval
+from data.eval_sets import SingleFolderEvalDataset
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -280,7 +280,7 @@ if __name__ == '__main__':
                 continue
 
             print(f"-- Evaluating {ds_name}...", end=" ", flush=True)
-            ds_set = SICEDatasetFromFolderEval(ds_path, transform=ToTensor())
+            ds_set = SingleFolderEvalDataset(ds_path, transform=ToTensor())
             ds_loader = DataLoader(dataset=ds_set, num_workers=1, batch_size=1, shuffle=False)
 
             outputs_ssm = eval(eval_net, ds_loader, alpha_combinations, unpaired=True)[alpha_combinations[0]][0]

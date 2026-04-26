@@ -1,10 +1,12 @@
-from torchvision.transforms import Compose, ToTensor, RandomCrop, RandomHorizontalFlip, RandomVerticalFlip, Resize, Lambda
 from PIL import Image
-from data.LOLdataset import LOLv1DatasetFromFolder, LOLv2DatasetFromFolder, LOLv2SynDatasetFromFolder
-from data.eval_sets import *
-from data.SICE_blur_SID import *
+from torchvision.transforms import (
+    Compose, ToTensor, RandomCrop, RandomHorizontalFlip, RandomVerticalFlip,
+    Resize, Lambda,
+)
 
-def transform1(size=256):
+
+def train_crop_transform(size=256):
+    """Random crop + flip, with up-resize if image is too small (transform1)."""
     resizer = Resize(size)
     return Compose([
         Lambda(lambda img: resizer(img) if min(img.size) < size else img),
@@ -14,7 +16,9 @@ def transform1(size=256):
         ToTensor(),
     ])
 
-def transform2():
+
+def eval_pad8_transform():
+    """Resize down to nearest multiple of 8 then ToTensor (transform2)."""
     def resize_to_multiple_of_8(img):
         w, h = img.size
         new_w = (w // 8) * 8
@@ -24,7 +28,9 @@ def transform2():
         return img
     return Compose([Lambda(resize_to_multiple_of_8), ToTensor()])
 
-def transform3():
+
+def flip_only_transform():
+    """Random flip only, no crop/resize (transform3)."""
     return Compose([
         RandomHorizontalFlip(),
         RandomVerticalFlip(),

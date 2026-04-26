@@ -55,7 +55,7 @@ from data.scheduler import *                # CosineAnnealingRestartLR, GradualW
 import scripts.dist as dist
 
 from data.unpaired_dataset import UnpairedDataset
-from data.eval_sets import DatasetFromFolderEval
+from data.eval_sets import PairedEvalDataset
 
 from net.fofa_modules import FoundationEncoder, FeatureProjector, FoFADiscriminator
 from loss.losses import (FoFADiscriminatorLoss, SpatialConsistencyLoss, 
@@ -164,12 +164,10 @@ def build_eval_loader(args):
     """평가 데이터 로더. val 경로가 없으면 None 반환."""
     if not args.data_val_low or not args.data_val_high:
         return None
-    # DatasetFromFolderEval은 두 폴더를 직접 받는 구조가 아니므로
-    # 상위 디렉토리 + 서브폴더명으로 구성
     val_root = os.path.commonpath([args.data_val_low, args.data_val_high])
     low_name  = os.path.relpath(args.data_val_low,  val_root)
     high_name = os.path.relpath(args.data_val_high, val_root)
-    dataset = DatasetFromFolderEval(
+    dataset = PairedEvalDataset(
         val_root,
         folder1=low_name,
         folder2=high_name,
