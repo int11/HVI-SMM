@@ -11,7 +11,7 @@ def gdrive_download(file_id, output_zip, extract_to):
         return
     os.makedirs(extract_to, exist_ok=True)
     try:
-        gdown.download(f"https://drive.google.com/uc?id={file_id}", output=output_zip, fuzzy=True)
+        gdown.download(id=file_id, output=output_zip)
         with zipfile.ZipFile(output_zip, 'r') as zf:
             members = zf.namelist()
             top = os.path.commonprefix(members).rstrip("/") + "/"

@@ -24,7 +24,7 @@ from loss.zerodce_losses import (
 )
 import scripts.dist as dist
 from scripts.utils import Tee, checkpoint, compute_model_complexity, init_seed, build_generator_from_args, make_common_scheduler, plot_from_tfevents
-from scripts.measure import metrics, metrics_no_ref
+from scripts.measure import metrics
 from scripts.eval import eval as eval_fn
 import scripts.measure as measure_mod
 
@@ -37,10 +37,12 @@ def enlightengan_option():
                         help='저조도 학습 이미지 디렉토리 (예: ExDark, 기본값: ./datasets/ExDark)')
     parser.add_argument('--data_high',     type=str, default='./datasets/coco/train2017', required=False,
                         help='정상조도 학습 이미지 디렉토리 (예: COCO train2017, 기본값: ./datasets/coco/train2017)')
-    parser.add_argument('--data_val_low',  type=str, default='./datasets/FiveK/test/input',
-                        help='평가용 저조도 이미지 디렉토리')
-    parser.add_argument('--data_val_high', type=str, default='./datasets/FiveK/test/target',
-                        help='평가용 정상조도 이미지 디렉토리')
+    parser.add_argument('--data_val_low',  type=str, nargs='+',
+                        default=['./datasets/FiveK/test/input'],
+                        help='평가용 저조도 이미지 디렉토리 (여러 개 지정 가능)')
+    parser.add_argument('--data_val_high', type=str, nargs='+',
+                        default=['./datasets/FiveK/test/target'],
+                        help='평가용 정상조도 이미지 디렉토리 (여러 개 지정 가능)')
 
     # ---- EnlightenGAN 세부 설정 ----
     parser.add_argument('--patch_size',      type=int,   default=32,       help='지역 판별기용 패치 크기')
@@ -63,9 +65,10 @@ def enlightengan_option():
                         help='HV-plane Preservation Loss 가중치 (HVI-native 색상 보존 prior, 권장: 1.0)')
     parser.add_argument('--lambda_i_tv_hvi', type=float, default=0,
                         help='HVI-space Intensity TV Loss 가중치 (선택적, 기본 비활성)')
-
-    # Override default model_file for SMM
-    parser.set_defaults(model_file='net/CIDNet_SMM.py')
+    
+    # ---- 기타 훈련 설정 ----
+    parser.add_argument('--snapshot_vis_num', type=int, default=20,
+                        help='Train/eval snapshot 시각화에 사용할 고정 샘플 개수')
 
     return parser
 
@@ -302,10 +305,17 @@ def train(rank, args):
         if dist.is_dist_available_and_initialized():
             train_loader = dist.warp_loader(train_loader, True)
 
-        # Evaluation Dataset (FiveK paired)
+        # Evaluation Datasets (paired, 여러 개 지원)
         from data.eval_sets import PairedEvalDataset
-        val_dataset = PairedEvalDataset(args.data_val_low.replace('/input', ''), folder1='input', folder2='target', transform=eval_pad8_transform())
-        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=1)
+        val_datasets = []
+        for low_dir, high_dir in zip(args.data_val_low, args.data_val_high):
+            ds_name = os.path.basename(os.path.dirname(low_dir))
+            parent_dir = os.path.dirname(low_dir)
+            folder1 = os.path.basename(low_dir)
+            folder2 = os.path.basename(high_dir)
+            ds = PairedEvalDataset(parent_dir, folder1=folder1, folder2=folder2, transform=eval_pad8_transform())
+            loader = torch.utils.data.DataLoader(ds, batch_size=1, shuffle=False, num_workers=1)
+            val_datasets.append((ds_name, ds, loader))
 
         # Model
         model = EnlightenGANModel(args, device)
@@ -315,7 +325,7 @@ def train(rank, args):
         if dist.is_main_process():
             os.makedirs(os.path.join(snapshot_dir, 'train'), exist_ok=True)
             os.makedirs(os.path.join(snapshot_dir, 'eval'), exist_ok=True)
-        num_vis = min(4, len(train_dataset), len(val_dataset))
+        num_vis = min(args.snapshot_vis_num, len(train_dataset))
         fixed_train_low = torch.stack(
             [train_dataset[i][0] for i in range(num_vis)]
         ).to(device)
@@ -365,32 +375,48 @@ def train(rank, args):
                         'optimizer_D_state_dict': model.optimizer_D.state_dict(),
                     }, os.path.join(save_dir, f"epoch_{epoch}_D.pth"))
 
-                    # ---- Evaluation ----
-                    print(f"===> Evaluating at Epoch {epoch}...")
-                    alpha_combinations = [(1.0, 1.0, 1.0)] # Default alpha
-                    eval_results = eval_fn(model.netG, val_loader, alpha_combinations)
-                    output_list, gt_list = eval_results[alpha_combinations[0]]
-                    
-                    # Paired metrics (PSNR, SSIM, LPIPS)
-                    avg_psnr, avg_ssim, avg_lpips = metrics(output_list, gt_list, use_gt_mean=False)
-                    avg_psnr_gt, avg_ssim_gt, _ = metrics(output_list, gt_list, use_gt_mean=True)
-                    
-                    # No-reference metrics (NIQE, BRISQUE)
-                    avg_niqe, avg_brisque = metrics_no_ref(output_list)
-                    
-                    print(f"===> Eval Results - PSNR: {avg_psnr:.4f} (GT-mean: {avg_psnr_gt:.4f}), SSIM: {avg_ssim:.4f}, LPIPS: {avg_lpips:.4f}")
-                    print(f"===> Unsupervised Metrics - NIQE: {avg_niqe:.4f}, BRISQUE: {avg_brisque:.4f}")
-                    
-                    if writer:
-                        writer.add_scalar("Metrics/PSNR", avg_psnr, epoch)
-                        writer.add_scalar("Metrics/PSNR_GT", avg_psnr_gt, epoch)
-                        writer.add_scalar("Metrics/SSIM", avg_ssim, epoch)
-                        writer.add_scalar("Metrics/LPIPS", avg_lpips, epoch)
-                        writer.add_scalar("Metrics/NIQE", avg_niqe, epoch)
-                        writer.add_scalar("Metrics/BRISQUE", avg_brisque, epoch)
-                    
-                    # ---- Train snapshot (고정 unpaired 샘플, input|output 그리드) ----
                     model.netG.eval()
+
+                    # ---- Evaluation + Eval snapshot (per dataset) ----
+                    alpha_combinations = [(1.0, 1.0, 1.0)]
+                    for ds_name, val_dataset_i, val_loader_i in val_datasets:
+                        print(f"===> Evaluating [{ds_name}] at Epoch {epoch}...")
+                        eval_results = eval_fn(model.netG, val_loader_i, alpha_combinations)
+                        output_list, gt_list = eval_results[alpha_combinations[0]]
+
+                        avg_psnr, avg_ssim, avg_lpips = metrics(output_list, gt_list, use_gt_mean=False)
+                        avg_psnr_gt, avg_ssim_gt, avg_lpips_gt = metrics(output_list, gt_list, use_gt_mean=True)
+
+                        print(f"===> [{ds_name}] PSNR: {avg_psnr:.4f} (GT-mean: {avg_psnr_gt:.4f}), SSIM: {avg_ssim:.4f} (GT-mean: {avg_ssim_gt:.4f}), LPIPS: {avg_lpips:.4f} (GT-mean: {avg_lpips_gt:.4f})")
+
+                        if writer:
+                            writer.add_scalar(f"Metrics/{ds_name}/PSNR", avg_psnr, epoch)
+                            writer.add_scalar(f"Metrics/{ds_name}/PSNR_GT", avg_psnr_gt, epoch)
+                            writer.add_scalar(f"Metrics/{ds_name}/SSIM", avg_ssim, epoch)
+                            writer.add_scalar(f"Metrics/{ds_name}/SSIM_GT", avg_ssim_gt, epoch)
+                            writer.add_scalar(f"Metrics/{ds_name}/LPIPS", avg_lpips, epoch)
+                            writer.add_scalar(f"Metrics/{ds_name}/LPIPS_GT", avg_lpips_gt, epoch)
+
+                        # ---- Eval snapshot (paired, input|output|GT 그리드, zero-padding) ----
+                        n_eval_vis = min(num_vis, len(output_list))
+                        triples = []
+                        for i in range(n_eval_vis):
+                            inp = val_dataset_i[i][0].clamp(0, 1)
+                            outp = torch.from_numpy(output_list[i]).permute(2, 0, 1).clamp(0, 1)
+                            gt = transforms.ToTensor()(gt_list[i]).clamp(0, 1)
+                            triples.append(torch.cat([inp, outp, gt], dim=2))
+                        max_h = max(t.shape[1] for t in triples)
+                        max_w = max(t.shape[2] for t in triples)
+                        padded = [
+                            F.pad(t, (0, max_w - t.shape[2], 0, max_h - t.shape[1]), value=0)
+                            for t in triples
+                        ]
+                        eval_grid = torch.cat(padded, dim=1)
+                        transforms.ToPILImage()(eval_grid).save(
+                            os.path.join(snapshot_dir, 'eval', f"epoch_{epoch}_{ds_name}.png")
+                        )
+
+                    # ---- Train snapshot (고정 unpaired 샘플, input|output 그리드) ----
                     with torch.no_grad():
                         t_out = model.netG(fixed_train_low)
                         t_fake = t_out[0] if isinstance(t_out, (tuple, list)) else t_out
@@ -406,26 +432,7 @@ def train(rank, args):
                         os.path.join(snapshot_dir, 'train', f"epoch_{epoch}.png")
                     )
 
-                    # ---- Eval snapshot (paired, input|output|GT 그리드, zero-padding) ----
-                    n_eval_vis = min(num_vis, len(output_list))
-                    triples = []
-                    for i in range(n_eval_vis):
-                        inp = val_dataset[i][0].clamp(0, 1)
-                        outp = torch.from_numpy(output_list[i]).permute(2, 0, 1).clamp(0, 1)
-                        gt = transforms.ToTensor()(gt_list[i]).clamp(0, 1)
-                        triples.append(torch.cat([inp, outp, gt], dim=2))
-                    max_h = max(t.shape[1] for t in triples)
-                    max_w = max(t.shape[2] for t in triples)
-                    padded = [
-                        F.pad(t, (0, max_w - t.shape[2], 0, max_h - t.shape[1]), value=0)
-                        for t in triples
-                    ]
-                    eval_grid = torch.cat(padded, dim=1)
-                    transforms.ToPILImage()(eval_grid).save(
-                        os.path.join(snapshot_dir, 'eval', f"epoch_{epoch}.png")
-                    )
-
-                    model.netG.train() # Back to training mode
+                    model.netG.train()
 
         if writer:
             writer.close()
