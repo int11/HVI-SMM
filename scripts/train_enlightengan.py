@@ -35,8 +35,8 @@ def enlightengan_option():
     # ---- Unpaired 데이터 경로 ----
     parser.add_argument('--data_low',      type=str, default='./datasets/ExDark', required=False,
                         help='저조도 학습 이미지 디렉토리 (예: ExDark, 기본값: ./datasets/ExDark)')
-    parser.add_argument('--data_high',     type=str, default='./datasets/coco/train2017', required=False,
-                        help='정상조도 학습 이미지 디렉토리 (예: COCO train2017, 기본값: ./datasets/coco/train2017)')
+    parser.add_argument('--data_high',     type=str, default='./datasets/coco/coco2017/train2017', required=False,
+                        help='정상조도 학습 이미지 디렉토리 (예: COCO train2017, 기본값: ./datasets/coco/coco2017/train2017)')
     parser.add_argument('--data_val_low',  type=str, nargs='+',
                         default=['./datasets/FiveK/test/input', './datasets/LOL-v2/Synthetic/Test/Low'],
                         help='평가용 저조도 이미지 디렉토리 (여러 개 지정 가능)')
@@ -278,7 +278,7 @@ def train(rank, args):
     device = dist.get_device()
     now = time.strftime("%Y%m%d_%H%M%S")
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    save_dir = os.path.join(project_root, 'weights', f"enlightengan_{now}")
+    save_dir = os.path.join(project_root, 'weights', f"enlightengan", now)
     
     if dist.is_main_process():
         os.makedirs(save_dir, exist_ok=True)
