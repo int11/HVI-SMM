@@ -38,10 +38,10 @@ def enlightengan_option():
     parser.add_argument('--data_high',     type=str, default='./datasets/coco/train2017', required=False,
                         help='정상조도 학습 이미지 디렉토리 (예: COCO train2017, 기본값: ./datasets/coco/train2017)')
     parser.add_argument('--data_val_low',  type=str, nargs='+',
-                        default=['./datasets/FiveK/test/input'],
+                        default=['./datasets/FiveK/test/input', './datasets/LOL-v2/Synthetic/Test/Low'],
                         help='평가용 저조도 이미지 디렉토리 (여러 개 지정 가능)')
     parser.add_argument('--data_val_high', type=str, nargs='+',
-                        default=['./datasets/FiveK/test/target'],
+                        default=['./datasets/FiveK/test/target', './datasets/LOL-v2/Synthetic/Test/Normal'],
                         help='평가용 정상조도 이미지 디렉토리 (여러 개 지정 가능)')
 
     # ---- EnlightenGAN 세부 설정 ----

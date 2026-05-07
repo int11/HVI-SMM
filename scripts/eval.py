@@ -41,18 +41,18 @@ def eval(model, data, alpha_combinations, unpaired=False):
     Unified evaluation function for both CIDNet and CIDNet_SMM models.
     Efficiently handles multiple alpha combinations by computing features once,
     then applying different alpha values without redundant forward passes.
-    
+
     Args:
         model: BaseCIDNet or BaseCIDNet_SMM model instance
         data: DataLoader for test data
         alpha_combinations: List of (base_alpha_s, base_alpha_i, alpha_rgb) tuples
         unpaired: bool, if True, skip GT processing (default: False)
                            예: [(1.0, 1.0, 1.0)] or [(1.3, 1.0, 1.0), (1.0, 1.0, 0.8)]
-        
+
     Returns:
         dict: {alpha_combo: (output_list, gt_list)}
               예: {(1.0, 1.0, 1.0): ([output_np, ...], [gt_pil, ...])}
-    
+
     Note:
         Uses forward_features() and apply_alpha_scaling() to avoid redundant
         computations across different alpha values. Works for both base CIDNet
@@ -60,25 +60,25 @@ def eval(model, data, alpha_combinations, unpaired=False):
     """
     if not isinstance(model, BaseCIDNet):
         raise ValueError("eval() only supports BaseCIDNet and its subclasses")
-    
+
     model = dist.de_parallel(model)
     model.eval()
     torch.set_grad_enabled(False)
     device = dist.get_device()
-    
+
     # Initialize results dictionary
     results = {combo: ([], []) for combo in alpha_combinations}
-    
+
     for batch in data:
         input_img = batch[0].to(device)
-        
+
         if not unpaired:
             gt_img = batch[1]
-        
+
         # Forward pass once (heavy computation)
         with torch.no_grad():
             output_hvi, scale_factor = model.forward_features(input_img)
-        
+
         # Apply different alpha combinations (lightweight)
         for (base_alpha_s, base_alpha_i, alpha_rgb) in alpha_combinations:
             with torch.no_grad():
@@ -86,11 +86,11 @@ def eval(model, data, alpha_combinations, unpaired=False):
                     output_hvi, scale_factor,
                     base_alpha_s, base_alpha_i, alpha_rgb
                 )
-            
-            # Convert to numpy and store
+
+            # Convert to numpy and store1
             output_rgb = torch.clamp(output_rgb, 0, 1)
             output_np = output_rgb.squeeze(0).cpu().numpy().transpose(1, 2, 0)
-            
+
             if not unpaired:
                 gt_pil = ToPILImage()(gt_img.squeeze(0).cpu())
                 results[(base_alpha_s, base_alpha_i, alpha_rgb)][1].append(gt_pil)
@@ -98,29 +98,26 @@ def eval(model, data, alpha_combinations, unpaired=False):
                 results[(base_alpha_s, base_alpha_i, alpha_rgb)][1].append(None)
 
             results[(base_alpha_s, base_alpha_i, alpha_rgb)][0].append(output_np)
-        
+
         torch.cuda.empty_cache()
 
-    
+
     torch.set_grad_enabled(True)
     return results
-
-
-
 
 
 def load_cidnet_base_model(model_path, device):
     """Hugging Face에서 CIDNet 모델을 다운로드하고 로드"""
     print(f"Loading CIDNet model from: {model_path}")
-    
+
     # Hugging Face Hub에서 CIDNet model 다운로드
     model_file = hf_hub_download(
-        repo_id=model_path, 
-        filename="model.safetensors", 
+        repo_id=model_path,
+        filename="model.safetensors",
         repo_type="model"
     )
     print(f"CIDNet model downloaded from: {model_file}")
-    
+
     # 모델 초기화 및 가중치 로드
     model = CIDNet()
     state_dict = sf.load_file(model_file)
@@ -130,13 +127,14 @@ def load_cidnet_base_model(model_path, device):
     return model
 
 
-def make_row(dataset, model, psnr='-', ssim='-', lpips='-', niqe='-', brisque='-'):
-    return {'Dataset': dataset, 'Model': model,
+def make_row(dataset, model, alpha='-', psnr='-', ssim='-', lpips='-', niqe='-', brisque='-'):
+    return {'Dataset': dataset, 'Model': model, 'Alpha': alpha,
             'PSNR': psnr, 'SSIM': ssim, 'LPIPS': lpips, 'NIQE': niqe, 'BRISQUE': brisque}
 
 
 def print_table(data):
-    header = f"{'Dataset':<20} | {'Model':<12} | {'PSNR':>8} | {'SSIM':>8} | {'LPIPS':>8} | {'NIQE':>8} | {'BRISQUE':>8}"
+    header = (f"{'Dataset':<20} | {'Model':<12} | {'Alpha':<16} | "
+              f"{'PSNR':>8} | {'SSIM':>8} | {'LPIPS':>8} | {'NIQE':>8} | {'BRISQUE':>8}")
     sep = "-" * len(header)
     print("\n\n" + "!" * 60)
     print("                 FINAL EVALUATION SUMMARY")
@@ -144,35 +142,44 @@ def print_table(data):
     print(header)
     print(sep)
     for item in data:
-        print(f"{item['Dataset']:<20} | {item['Model']:<12} | {item['PSNR']:>8} | {item['SSIM']:>8} | {item['LPIPS']:>8} | {item['NIQE']:>8} | {item['BRISQUE']:>8}")
-        if item['Model'] == 'CIDNet_SSM':
+        print(f"{item['Dataset']:<20} | {item['Model']:<12} | {item['Alpha']:<16} | "
+              f"{item['PSNR']:>8} | {item['SSIM']:>8} | {item['LPIPS']:>8} | "
+              f"{item['NIQE']:>8} | {item['BRISQUE']:>8}")
+        if item['Model'] == 'CIDNet SMM':
             print(sep)
     print("!" * 60)
 
 
-def make_comparison_image(images_dict, labels, header_h=40):
-    """images_dict: ordered dict of {label: PIL.Image}, all same size"""
-    imgs = list(images_dict.values())
-    w, h = imgs[0].size
-    n = len(imgs)
-    combined = Image.new('RGB', (w * n, h + header_h), (255, 255, 255))
-    for i, img in enumerate(imgs):
-        combined.paste(img, (w * i, header_h))
+def make_grid_comparison_image(rows_data, col_labels, header_h=40, row_label_w=180):
+    """
+    rows_data: list of (row_label_str, [PIL.Image, ...]) — one entry per alpha combo
+    col_labels: list of column header strings
+    Returns a grid: rows=alpha combos, cols=views
+    """
+    n_rows = len(rows_data)
+    n_cols = len(rows_data[0][1])
+    w, h = rows_data[0][1][0].size
+    combined = Image.new('RGB', (row_label_w + w * n_cols, header_h + h * n_rows), (255, 255, 255))
     draw = ImageDraw.Draw(combined)
     try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", 24)
+        font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", 20)
     except Exception:
         font = ImageFont.load_default()
-    for i, label in enumerate(labels):
-        draw.text((w * i + 10, 10), label, fill=(0, 0, 0), font=font)
+    for c, label in enumerate(col_labels):
+        draw.text((row_label_w + w * c + 5, 8), label, fill=(0, 0, 0), font=font)
+    for r, (row_label, images) in enumerate(rows_data):
+        y = header_h + h * r
+        draw.text((5, y + h // 2 - 10), row_label, fill=(0, 0, 0), font=font)
+        for c, img in enumerate(images):
+            combined.paste(img, (row_label_w + w * c, y))
     return combined
 
 
 if __name__ == '__main__':
     parser = option()
     parser.add_argument('--input_image', type=str, default=None, help='Path to input image')
-    parser.add_argument('--cidnet_ssm_path', type=str, default="weights/lolv2_syn/v5/20260122_235613_intensity_aug/epoch_500.pth", help='Path to the CIDNet SSM model weights')
-    parser.add_argument('--output_dir', type=str, default='results/unpairedv1', help='Directory to save comparison images')
+    parser.add_argument('--cidnet_smm_path', type=str, default="weights/lol_v1/v5/20260104_205240_gt_mean_loss='hvi'/epoch_600.pth", help='Path to the CIDNet SMM model weights')
+    parser.add_argument('--output_dir', type=str, default='results/smm_lolv1', help='Directory to save comparison images')
     # Available CIDNet models from Hugging Face:
     #   Fediory/HVI-CIDNet
     #   Fediory/HVI-CIDNet-LOLv1-wperc
@@ -186,16 +193,22 @@ if __name__ == '__main__':
     #   Fediory/HVI-CIDNet-SICE
     #   Fediory/HVI-CIDNet-Sony-Total-Dark
     #   Fediory/HVI-CIDNet-FiveK
-    parser.add_argument('--cidnet_path', type=str, default="Fediory/HVI-CIDNet-Generalization", help='Path to the base CIDNet model')
-    parser.add_argument('--base_alpha_s', type=float, default=1.0, help='Base alpha_s parameter for CIDNet') 
-    parser.add_argument('--base_alpha_i', type=float, default=1.0, help='Base alpha_i parameter for CIDNet')
-    parser.add_argument('--alpha_rgb', type=float, default=1.0, help='RGB scaling factor')
+    parser.add_argument('--cidnet_path', type=str, default="Fediory/HVI-CIDNet-LOLv1-wperc", help='Path to the base CIDNet model')
+    parser.add_argument('--alpha_combinations', type=str, nargs='+',
+                        default=['1.0,1.0,1.0', '0.7,1.0,1.0', '1.3,1.0,1.0','1.6,1.0,1.0','1.9,1.0,1.0','2.1,1.0,1.0', '1.0,0.7,1.0', '1.0,1.3,1.0', '1.0,1.6,1.0', '1.0,1.9,1.0', '1.0,2.1,1.0'],
+                        help='Alpha combinations as "alpha_s,alpha_i,alpha_rgb" (space-separated). '
+                             'Example: --alpha_combinations 1.3,1.0,1.0 1.0,1.0,0.8 1.0,1.0,1.0')
     parser.add_argument('--use_gt_mean', type=bool, default=False, help='Use the mean of GT to rectify the output of the model')
     parser.add_argument('--unpaired_dataset_dir', type=str, default='./datasets/unpaired', help='Directory path containing unpaired datasets')
     parser.add_argument('--unpaired_dataset_names', type=str, nargs='+', default=['DICM', 'LIME', 'MEF', 'NPE'], help='List of unpaired dataset folder names to evaluate')
     args = parser.parse_args()
 
-    alpha_combinations = [(args.base_alpha_s, args.base_alpha_i, args.alpha_rgb)]
+    # Parse alpha_combinations from "a_s,a_i,a_rgb" strings
+    alpha_combinations = []
+    for combo_str in args.alpha_combinations:
+        parts = [float(x) for x in combo_str.split(',')]
+        assert len(parts) == 3, f"Each alpha combination must have 3 values: {combo_str}"
+        alpha_combinations.append(tuple(parts))
 
     # ── Data loader setup ──────────────────────────────────────────────────
     if args.input_image is not None:
@@ -206,13 +219,13 @@ if __name__ == '__main__':
         training_data_loader, testing_data_loader = load_datasets(args)
         data_loader = testing_data_loader
 
-    # ── Load CIDNet_SSM & register hook ───────────────────────────────────
+    # ── Load CIDNet_SMM & register hook ───────────────────────────────────
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     eval_net = CIDNet_SMM().cuda()
     eval_net.load_state_dict(
-        torch.load(args.cidnet_ssm_path, map_location='cpu')['model_state_dict']
+        torch.load(args.cidnet_smm_path, map_location='cpu')['model_state_dict']
     )
-    print(f"Loaded CIDNet_SSM checkpoint from {args.cidnet_ssm_path}")
+    print(f"Loaded CIDNet_SMM checkpoint from {args.cidnet_smm_path}")
 
     alpha_outputs = []
     hook = eval_net.alpha_predictor.register_forward_hook(
@@ -220,22 +233,23 @@ if __name__ == '__main__':
     )
 
     results = eval(eval_net, data_loader, alpha_combinations)
-    output_list, gt_list = results[alpha_combinations[0]]
     hook.remove()
 
     os.makedirs(args.output_dir, exist_ok=True)
 
     # ── Single-image mode ─────────────────────────────────────────────────
     if args.input_image is not None:
-        Image.fromarray((output_list[0] * 255).astype(np.uint8)).save(
-            os.path.join(args.output_dir, 'single_image_output.png')
-        )
-        print(f"Saved output to {args.output_dir}/single_image_output.png")
+        for combo in alpha_combinations:
+            output_list, _ = results[combo]
+            combo_str = f"alpha_{combo[0]}_{combo[1]}_{combo[2]}"
+            out_path = os.path.join(args.output_dir, f'{combo_str}_output.png')
+            Image.fromarray((output_list[0] * 255).astype(np.uint8)).save(out_path)
+            print(f"Saved [{combo_str}] output to {out_path}")
 
         if alpha_outputs:
-            sf = alpha_outputs[0]  # shape: (1, 2, h, w)
+            sf_out = alpha_outputs[0]  # shape: (1, 2, h, w)
             for ch, name in [(0, 'alpha_s'), (1, 'alpha_i')]:
-                array_to_heatmap(sf[0, ch].cpu().numpy()).save(
+                array_to_heatmap(sf_out[0, ch].cpu().numpy()).save(
                     os.path.join(args.output_dir, f'single_image_{name}.png')
                 )
             print(f"Saved alpha maps to {args.output_dir}")
@@ -250,28 +264,35 @@ if __name__ == '__main__':
         alpha_s_list = [out[b, 0].cpu().numpy() for out in alpha_outputs for b in range(out.shape[0])]
         alpha_i_list = [out[b, 1].cpu().numpy() for out in alpha_outputs for b in range(out.shape[0])]
 
-        # Evaluate base CIDNet
+        # Evaluate base CIDNet for all combinations
         results_base = eval(cidnet_base, data_loader, alpha_combinations)
-        output_base_list, _ = results_base[alpha_combinations[0]]
+        gt_list = results[alpha_combinations[0]][1]  # GT is same across all combinations
 
-        # Paired metrics
-        psnr_ssm, ssim_ssm, lpips_ssm = metrics(output_list, gt_list, use_gt_mean=args.use_gt_mean)
-        psnr_base, ssim_base, lpips_base = metrics(output_base_list, gt_list, use_gt_mean=args.use_gt_mean)
-
+        # Paired metrics per combination
         dataset_name = args.dataset.upper() if args.dataset else 'Paired'
-        final_summary_data = [
-            make_row(f'Paired ({dataset_name})', 'Base CIDNet',
-                     psnr=f"{psnr_base:.4f}", ssim=f"{ssim_base:.4f}", lpips=f"{lpips_base:.4f}"),
-            make_row(f'Paired ({dataset_name})', 'CIDNet_SSM',
-                     psnr=f"{psnr_ssm:.4f}", ssim=f"{ssim_ssm:.4f}", lpips=f"{lpips_ssm:.4f}"),
-        ]
+        final_summary_data = []
+
+        for combo in alpha_combinations:
+            output_smm, _ = results[combo]
+            output_base, _ = results_base[combo]
+            psnr_smm, ssim_smm, lpips_smm = metrics(output_smm, gt_list, use_gt_mean=args.use_gt_mean)
+            psnr_base, ssim_base, lpips_base = metrics(output_base, gt_list, use_gt_mean=args.use_gt_mean)
+            alpha_str = f"({combo[0]},{combo[1]},{combo[2]})"
+            final_summary_data += [
+                make_row(f'Paired ({dataset_name})', 'Base CIDNet', alpha=alpha_str,
+                         psnr=f"{psnr_base:.4f}", ssim=f"{ssim_base:.4f}", lpips=f"{lpips_base:.4f}"),
+                make_row(f'Paired ({dataset_name})', 'CIDNet SMM', alpha=alpha_str,
+                         psnr=f"{psnr_smm:.4f}", ssim=f"{ssim_smm:.4f}", lpips=f"{lpips_smm:.4f}"),
+            ]
 
         # ── Unpaired datasets ──────────────────────────────────────────────
         print("\n" + "=" * 60)
         print("Unpaired Dataset Evaluation")
         print("=" * 60)
 
-        total_imgs = total_niqe_ssm = total_brisque_ssm = total_niqe_base = total_brisque_base = 0
+        total_imgs = 0
+        total_niqe = {combo: {'smm': 0.0, 'base': 0.0} for combo in alpha_combinations}
+        total_brisque = {combo: {'smm': 0.0, 'base': 0.0} for combo in alpha_combinations}
 
         for ds_name in args.unpaired_dataset_names:
             ds_path = os.path.join(args.unpaired_dataset_dir, ds_name)
@@ -283,81 +304,116 @@ if __name__ == '__main__':
             ds_set = SingleFolderEvalDataset(ds_path, transform=ToTensor())
             ds_loader = DataLoader(dataset=ds_set, num_workers=1, batch_size=1, shuffle=False)
 
-            outputs_ssm = eval(eval_net, ds_loader, alpha_combinations, unpaired=True)[alpha_combinations[0]][0]
-            outputs_base = eval(cidnet_base, ds_loader, alpha_combinations, unpaired=True)[alpha_combinations[0]][0]
-
-            niqe_ssm, brisque_ssm = metrics_no_ref(outputs_ssm)
-            niqe_base, brisque_base = metrics_no_ref(outputs_base)
+            results_smm_ds = eval(eval_net, ds_loader, alpha_combinations, unpaired=True)
+            results_base_ds = eval(cidnet_base, ds_loader, alpha_combinations, unpaired=True)
             print("Done")
 
-            final_summary_data += [
-                make_row(ds_name, 'Base CIDNet', niqe=f"{niqe_base:.4f}", brisque=f"{brisque_base:.4f}"),
-                make_row(ds_name, 'CIDNet_SSM',  niqe=f"{niqe_ssm:.4f}",  brisque=f"{brisque_ssm:.4f}"),
-            ]
-
-            n = len(outputs_ssm)
+            n = len(ds_set)
             total_imgs += n
-            total_niqe_ssm += niqe_ssm * n;   total_brisque_ssm += brisque_ssm * n
-            total_niqe_base += niqe_base * n;  total_brisque_base += brisque_base * n
 
-            # Save unpaired comparison images
-            save_ds_dir = os.path.join(args.output_dir, ds_name)
-            os.makedirs(save_ds_dir, exist_ok=True)
+            for combo in alpha_combinations:
+                outputs_smm = results_smm_ds[combo][0]
+                outputs_base = results_base_ds[combo][0]
+                niqe_smm, brisque_smm = metrics_no_ref(outputs_smm)
+                niqe_base, brisque_base = metrics_no_ref(outputs_base)
 
+                alpha_str = f"({combo[0]},{combo[1]},{combo[2]})"
+                final_summary_data += [
+                    make_row(ds_name, 'Base CIDNet', alpha=alpha_str,
+                             niqe=f"{niqe_base:.4f}", brisque=f"{brisque_base:.4f}"),
+                    make_row(ds_name, 'CIDNet SMM', alpha=alpha_str,
+                             niqe=f"{niqe_smm:.4f}", brisque=f"{brisque_smm:.4f}"),
+                ]
+                total_niqe[combo]['smm']    += niqe_smm * n
+                total_niqe[combo]['base']   += niqe_base * n
+                total_brisque[combo]['smm'] += brisque_smm * n
+                total_brisque[combo]['base'] += brisque_base * n
+
+            # Save unpaired comparison grid (rows=alpha combos, cols=Input/Base/SMM)
             ds_inputs = [
                 (ds_set[i][0] if isinstance(ds_set[i], tuple) else ds_set[i]).numpy().transpose(1, 2, 0)
-                for i in range(len(ds_set))
+                for i in range(n)
             ]
-            for i, (out_ssm, out_base, in_np) in enumerate(zip(outputs_ssm, outputs_base, ds_inputs)):
-                cmp = make_comparison_image(
-                    {'Input': Image.fromarray((in_np * 255).astype(np.uint8)),
-                     'Base CIDNet': Image.fromarray((out_base * 255).astype(np.uint8)),
-                     'CIDNet_SSM': Image.fromarray((out_ssm * 255).astype(np.uint8))},
-                    labels=["Input (No GT)", "Base CIDNet", "CIDNet_SSM"]
+            cmp_ds_dir = os.path.join(args.output_dir, ds_name, 'comparison')
+            os.makedirs(cmp_ds_dir, exist_ok=True)
+            for i, in_np in enumerate(ds_inputs):
+                input_pil = Image.fromarray((in_np * 255).astype(np.uint8))
+                rows_data = []
+                for combo in alpha_combinations:
+                    row_label = f"α=({combo[0]},{combo[1]},{combo[2]})"
+                    out_smm = results_smm_ds[combo][0][i]
+                    out_base = results_base_ds[combo][0][i]
+                    rows_data.append((row_label, [
+                        input_pil,
+                        Image.fromarray((out_base * 255).astype(np.uint8)),
+                        Image.fromarray((out_smm * 255).astype(np.uint8)),
+                    ]))
+                make_grid_comparison_image(rows_data, ["Input (No GT)", "Base CIDNet", "CIDNet SMM"]).save(
+                    os.path.join(cmp_ds_dir, f'{ds_name}_{i+1:03d}_cmp.png')
                 )
-                cmp.save(os.path.join(save_ds_dir, f'{ds_name}_{i+1:03d}_cmp.png'))
 
-        # Unpaired average row
+        # Unpaired average rows
         if total_imgs > 0:
-            final_summary_data += [
-                make_row('AVERAGE (Unpaired)', 'Base CIDNet',
-                         niqe=f"{total_niqe_base/total_imgs:.4f}", brisque=f"{total_brisque_base/total_imgs:.4f}"),
-                make_row('AVERAGE (Unpaired)', 'CIDNet_SSM',
-                         niqe=f"{total_niqe_ssm/total_imgs:.4f}",  brisque=f"{total_brisque_ssm/total_imgs:.4f}"),
-            ]
+            for combo in alpha_combinations:
+                alpha_str = f"({combo[0]},{combo[1]},{combo[2]})"
+                final_summary_data += [
+                    make_row('AVERAGE (Unpaired)', 'Base CIDNet', alpha=alpha_str,
+                             niqe=f"{total_niqe[combo]['base']/total_imgs:.4f}",
+                             brisque=f"{total_brisque[combo]['base']/total_imgs:.4f}"),
+                    make_row('AVERAGE (Unpaired)', 'CIDNet SMM', alpha=alpha_str,
+                             niqe=f"{total_niqe[combo]['smm']/total_imgs:.4f}",
+                             brisque=f"{total_brisque[combo]['smm']/total_imgs:.4f}"),
+                ]
 
         print_table(final_summary_data)
 
-        # ── Save paired comparison images ──────────────────────────────────
+        # ── Save paired images (individual per combo) + grid comparison ──────
         input_images = [batch[0].squeeze(0).numpy().transpose(1, 2, 0) for batch in testing_data_loader]
 
-        dirs = ['input', 'cidnet', 'cidnet_ssm', 'gt', 'alpha_s', 'alpha_i', 'comparison']
-        dir_paths = {name: os.path.join(args.output_dir, name) for name in dirs}
-        for path in dir_paths.values():
-            os.makedirs(path, exist_ok=True)
+        indiv_dirs = ['input', 'cidnet', 'cidnet_smm', 'gt', 'alpha_s', 'alpha_i']
+        combo_dir_paths = {}
+        for combo in alpha_combinations:
+            combo_str = f"alpha_{combo[0]}_{combo[1]}_{combo[2]}"
+            combo_dir_paths[combo] = {d: os.path.join(args.output_dir, combo_str, d) for d in indiv_dirs}
+            for path in combo_dir_paths[combo].values():
+                os.makedirs(path, exist_ok=True)
 
-        cmp_labels = ["Input", "Base CIDNet", "CIDNet_SSM", "GT", "Alpha_s", "Alpha_i"]
-        for idx, (out_np, base_np, gt_img, in_np, a_s, a_i) in enumerate(
-            zip(output_list, output_base_list, gt_list, input_images, alpha_s_list, alpha_i_list)
-        ):
+        cmp_dir = os.path.join(args.output_dir, 'comparison')
+        os.makedirs(cmp_dir, exist_ok=True)
+
+        col_labels = ["Input", "Base CIDNet", "CIDNet SMM", "GT", "Alpha_s", "Alpha_i"]
+        n_imgs = len(results[alpha_combinations[0]][0])
+        for idx in range(n_imgs):
+            in_np = input_images[idx]
+            a_s = alpha_s_list[idx]
+            a_i = alpha_i_list[idx]
+            input_pil   = Image.fromarray((in_np * 255).astype(np.uint8))
+            alpha_s_pil = array_to_heatmap(a_s)
+            alpha_i_pil = array_to_heatmap(a_i)
             img_name = f'{idx+1:03d}.png'
-            images = {
-                'input':      Image.fromarray((in_np * 255).astype(np.uint8)),
-                'cidnet':     Image.fromarray((base_np * 255).astype(np.uint8)),
-                'cidnet_ssm': Image.fromarray((out_np * 255).astype(np.uint8)),
-                'gt':         gt_img,
-                'alpha_s':    array_to_heatmap(a_s),
-                'alpha_i':    array_to_heatmap(a_i),
-            }
-            for name, img in images.items():
-                img.save(os.path.join(dir_paths[name], img_name))
 
-            make_comparison_image(images, cmp_labels).save(
-                os.path.join(dir_paths['comparison'], f'comparison_{idx+1:03d}.png')
+            rows_data = []
+            for combo in alpha_combinations:
+                out_np  = results[combo][0][idx]
+                gt_img  = results[combo][1][idx]
+                base_np = results_base[combo][0][idx]
+                base_pil = Image.fromarray((base_np * 255).astype(np.uint8))
+                smm_pil  = Image.fromarray((out_np  * 255).astype(np.uint8))
+
+                dp = combo_dir_paths[combo]
+                input_pil.save(os.path.join(dp['input'],      img_name))
+                base_pil .save(os.path.join(dp['cidnet'],     img_name))
+                smm_pil  .save(os.path.join(dp['cidnet_smm'], img_name))
+                gt_img   .save(os.path.join(dp['gt'],         img_name))
+                alpha_s_pil.save(os.path.join(dp['alpha_s'],  img_name))
+                alpha_i_pil.save(os.path.join(dp['alpha_i'],  img_name))
+
+                row_label = f"α=({combo[0]},{combo[1]},{combo[2]})"
+                rows_data.append((row_label, [input_pil, base_pil, smm_pil, gt_img, alpha_s_pil, alpha_i_pil]))
+
+            make_grid_comparison_image(rows_data, col_labels).save(
+                os.path.join(cmp_dir, f'comparison_{idx+1:03d}.png')
             )
-            print(f"Saved images [{idx+1:03d}]: {', '.join(images.keys())}")
+            print(f"Saved grid comparison [{idx+1:03d}]")
 
-        print(f"\n✓ Saved {len(output_list)} images to:")
-        for name, path in dir_paths.items():
-            print(f"  - {name.capitalize()}: {path}")
-
+        print(f"\n✓ Total output saved to: {args.output_dir}")

@@ -23,7 +23,7 @@ def str_to_bool(v):
 
 def worker_init_fn(worker_id):
     """Initialize random seed for each worker"""
-    worker_seed = np.random.get_state()[1][0] + worker_id
+    worker_seed = int(np.random.get_state()[1][0]) + worker_id
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
@@ -52,11 +52,11 @@ def option():
     parser.add_argument('--start_warmup', type=str_to_bool, default=True, help='turn False to train without warmup') 
 
     # choose which dataset you want to train, please only set one "True"
-    parser.add_argument('--dataset', type=str, default='lolv2_syn', choices=['lol_v1', 'lolv2_real', 'lolv2_syn', 'lol_blur', 'SID', 'SICE_mix', 'SICE_grad', 'fivek'], help='Choose one dataset to train on')
+    parser.add_argument('--dataset', type=str, default='lol_v1', choices=['lol_v1', 'lolv2_real', 'lolv2_syn', 'lol_blur', 'SID', 'SICE_mix', 'SICE_grad', 'fivek'], help='Choose one dataset to train on')
 
     # train datasets
     parser.add_argument('--data_train_lol_blur'     , type=str, default='./datasets/LOL_blur/train')
-    parser.add_argument('--data_train_lol_v1'       , type=str, default='./datasets/LOLdataset/our485')
+    parser.add_argument('--data_train_lol_v1'       , type=str, default='./datasets/LOL-v1/Train')
     parser.add_argument('--data_train_lolv2_real'   , type=str, default='./datasets/LOL-v2/Real_captured/Train')
     parser.add_argument('--data_train_lolv2_syn'    , type=str, default='./datasets/LOL-v2/Synthetic/Train')
     parser.add_argument('--data_train_SID'          , type=str, default='./datasets/Sony_total_dark/train')
@@ -64,7 +64,7 @@ def option():
 
     # validation input
     parser.add_argument('--data_val_lol_blur'       , type=str, default='./datasets/LOL_blur/eval/low_blur')
-    parser.add_argument('--data_val_lol_v1'         , type=str, default='./datasets/LOLdataset/eval15')
+    parser.add_argument('--data_val_lol_v1'         , type=str, default='./datasets/LOL-v1/Test')
     parser.add_argument('--data_val_lolv2_real'     , type=str, default='./datasets/LOL-v2/Real_captured/Test')
     parser.add_argument('--data_val_lolv2_syn'      , type=str, default='./datasets/LOL-v2/Synthetic/Test')
     parser.add_argument('--data_val_SID'            , type=str, default='./datasets/Sony_total_dark/eval/short')
@@ -101,9 +101,9 @@ def load_datasets(opt):
     print('===> Loading datasets')
     dataset = opt.dataset
     if dataset == 'lol_v1':
-        train_set = PairedFlatFolderDataset(opt.data_train_lol_v1, 'low', 'high', transform=train_crop_transform(opt.crop_size))
+        train_set = PairedFlatFolderDataset(opt.data_train_lol_v1, 'input', 'target', transform=train_crop_transform(opt.crop_size))
         training_data_loader = DataLoader(dataset=train_set, num_workers=opt.threads, batch_size=opt.batch_size, shuffle=opt.shuffle, worker_init_fn=worker_init_fn)
-        test_set = PairedEvalDataset(opt.data_val_lol_v1, folder1='low', folder2='high', transform=eval_pad8_transform())
+        test_set = PairedEvalDataset(opt.data_val_lol_v1, folder1='input', folder2='target', transform=eval_pad8_transform())
         testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=1, shuffle=False, worker_init_fn=worker_init_fn)
     elif dataset == 'lol_blur':
         train_set = PairedSubfolderDataset(opt.data_train_lol_blur, 'low_blur', 'high_sharp_scaled', gt_mode='per_file', transform=train_crop_transform(opt.crop_size))
