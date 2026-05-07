@@ -278,7 +278,7 @@ def train(rank, args):
     device = dist.get_device()
     now = time.strftime("%Y%m%d_%H%M%S")
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    save_dir = os.path.join(project_root, 'weights', f"enlightengan_{args.dataset}", now)
+    save_dir = os.path.join(project_root, 'weights', f"enlightengan_{now}")
     
     if dist.is_main_process():
         os.makedirs(save_dir, exist_ok=True)
