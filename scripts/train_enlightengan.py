@@ -381,13 +381,15 @@ def train(rank, args):
                     alpha_combinations = [(1.0, 1.0, 1.0)]
                     for ds_name, val_dataset_i, val_loader_i in val_datasets:
                         print(f"===> Evaluating [{ds_name}] at Epoch {epoch}...")
+                        eval_start = time.time()
                         eval_results = eval_fn(model.netG, val_loader_i, alpha_combinations)
                         output_list, gt_list = eval_results[alpha_combinations[0]]
 
                         avg_psnr, avg_ssim, avg_lpips = metrics(output_list, gt_list, use_gt_mean=False)
                         avg_psnr_gt, avg_ssim_gt, avg_lpips_gt = metrics(output_list, gt_list, use_gt_mean=True)
 
-                        print(f"===> [{ds_name}] PSNR: {avg_psnr:.4f} (GT-mean: {avg_psnr_gt:.4f}), SSIM: {avg_ssim:.4f} (GT-mean: {avg_ssim_gt:.4f}), LPIPS: {avg_lpips:.4f} (GT-mean: {avg_lpips_gt:.4f})")
+                        eval_time = time.time() - eval_start
+                        print(f"===> [{ds_name}] Time: {eval_time:.2f}s | PSNR: {avg_psnr:.4f} (GT-mean: {avg_psnr_gt:.4f}), SSIM: {avg_ssim:.4f} (GT-mean: {avg_ssim_gt:.4f}), LPIPS: {avg_lpips:.4f} (GT-mean: {avg_lpips_gt:.4f})")
 
                         if writer:
                             writer.add_scalar(f"Metrics/{ds_name}/PSNR", avg_psnr, epoch)
