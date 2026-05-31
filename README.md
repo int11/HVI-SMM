@@ -1,5 +1,9 @@
 # HVI-SMM: Spatially-Adaptive Correction for Low-Light Image Enhancement
 
+[![GitHub](https://img.shields.io/badge/GitHub-Code-black?logo=github)](https://github.com/int11/HVI-SMM)
+[![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Models-yellow)](https://huggingface.co/akyaa)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19706049.svg)](https://doi.org/10.5281/zenodo.19706049)
+
 ![Table 1: Main Results](pic/table1.png)
 ![Table 2: Main Results](pic/1.png)
 
@@ -59,11 +63,12 @@ weight_path = hf_hub_download(
 ## Citation
 If you use HVI-SMM in your research, please cite:
 ```latex
-@article{lee2025hvismm,
+@inproceedings{lee2026hvismm,
   title={HVI-SMM: Spatially-Adaptive Correction for Low-Light Image Enhancement},
-  author={Injae Lee and Sungho Kang and Juneho Yi},
-  journal={TODO},
-  year={2025}
+  author={Injea Lee and Sungho Kang and Juneho Yi},
+  booktitle={TAIMA 2026: Information Processing and Analysis: Methods and Applications},
+  year={2026},
+  doi={10.5281/zenodo.19706049}
 }
 ```
 
